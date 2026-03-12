@@ -1,10 +1,13 @@
+using SoundFlow.Components;
+using SoundFlow.Providers;
+
 namespace SonicRuntime.Engine;
 
 /// <summary>
 /// Maps opaque handles to active playback instances.
 /// No leases. No policy. No product semantics.
 ///
-/// Handle format: "h_" + 12 hex chars (e.g., "h_a1b2c3d4e5f6").
+/// Handle format: "h_" + 12 hex chars (e.g., "h_000000000001").
 /// Handles are internal to the runtime — sonic-core never exposes them to clients.
 /// </summary>
 public sealed class RuntimeState
@@ -34,15 +37,18 @@ public sealed class RuntimeState
 
     public void RemoveSlot(string handle)
     {
-        _slots.Remove(handle);
+        if (_slots.TryGetValue(handle, out var slot))
+        {
+            slot.Dispose();
+            _slots.Remove(handle);
+        }
     }
 }
 
 /// <summary>
-/// Minimal state for one active playback item.
-/// This will grow as real audio backends are wired in.
+/// State for one active playback item, including SoundFlow objects.
 /// </summary>
-public sealed class PlaybackSlot
+public sealed class PlaybackSlot : IDisposable
 {
     public string Handle { get; }
     public string? AssetRef { get; set; }
@@ -50,10 +56,23 @@ public sealed class PlaybackSlot
     public float Volume { get; set; } = 1.0f;
     public float Pan { get; set; }
     public bool Loop { get; set; }
-    public long PositionMs { get; set; }
-    public long? DurationMs { get; set; }
+
+    // SoundFlow objects — nullable because they're set after load
+    public FileStream? AudioStream { get; set; }
+    public StreamDataProvider? DataProvider { get; set; }
+    public SoundPlayer? Player { get; set; }
 
     public PlaybackSlot(string handle) => Handle = handle;
+
+    public void Dispose()
+    {
+        if (Player is not null)
+        {
+            try { Mixer.Master.RemoveComponent(Player); } catch { }
+        }
+        DataProvider?.Dispose();
+        AudioStream?.Dispose();
+    }
 }
 
 public enum PlaybackStatus

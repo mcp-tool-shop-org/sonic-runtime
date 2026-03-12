@@ -28,6 +28,10 @@
   <ItemGroup>
     <!-- JSON serialization: source-generated, NativeAOT-safe -->
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
+
+    <!-- Audio backend: SoundFlow (MiniAudio P/Invoke, NativeAOT-safe) -->
+    <!-- Selected over NAudio (COM interop broken under NativeAOT) per backend-evaluation.md -->
+    <PackageReference Include="SoundFlow" Version="1.1.1" />
   </ItemGroup>
 
 </Project>

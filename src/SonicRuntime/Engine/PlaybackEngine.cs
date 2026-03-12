@@ -1,17 +1,31 @@
+using SoundFlow.Abstracts;
+using SoundFlow.Components;
+using SoundFlow.Providers;
+
 namespace SonicRuntime.Engine;
 
 /// <summary>
-/// Stub playback engine. Manages handles and state transitions.
-/// Real audio I/O (NAudio, CSCore, etc.) will replace the stub implementations
-/// once NativeAOT compatibility is validated per ADR-0006.
+/// Real playback engine backed by SoundFlow/MiniAudio.
+/// Manages SoundPlayer lifecycle per handle.
+///
+/// Pan mapping: sonic-core uses -1.0..1.0 (standard audio convention).
+/// SoundFlow v1.1.1 uses 0.0..1.0 (0=left, 0.5=center, 1=right).
+/// All pan values from sonic-core are mapped before reaching SoundFlow.
 /// </summary>
 public sealed class PlaybackEngine
 {
     private readonly RuntimeState _state;
+    private readonly TextWriter _log;
+    private readonly bool _audioEnabled;
 
-    public PlaybackEngine(RuntimeState state)
+    /// <param name="state">Runtime state store</param>
+    /// <param name="audioEnabled">When false, skip file I/O and SoundFlow calls (for testing)</param>
+    /// <param name="log">Diagnostic output (stderr)</param>
+    public PlaybackEngine(RuntimeState state, bool audioEnabled = true, TextWriter? log = null)
     {
         _state = state;
+        _audioEnabled = audioEnabled;
+        _log = log ?? Console.Error;
     }
 
     public Task<string> LoadAssetAsync(string assetRef)
@@ -19,7 +33,22 @@ public sealed class PlaybackEngine
         var handle = _state.AllocateHandle();
         var slot = _state.GetSlot(handle);
         slot.AssetRef = assetRef;
-        // TODO: actually load the asset file and determine duration
+
+        if (_audioEnabled)
+        {
+            var filePath = ResolveAssetPath(assetRef);
+            if (!File.Exists(filePath))
+                throw new Protocol.RuntimeException("invalid_source", $"Asset file not found: {filePath}", retryable: false);
+
+            var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+            var provider = new StreamDataProvider(stream);
+            var player = new SoundPlayer(provider);
+
+            slot.AudioStream = stream;
+            slot.DataProvider = provider;
+            slot.Player = player;
+        }
+
         return Task.FromResult(handle);
     }
 
@@ -30,7 +59,16 @@ public sealed class PlaybackEngine
         slot.Volume = volume;
         slot.Pan = pan;
         slot.Loop = loop;
-        // TODO: start actual audio playback
+
+        if (_audioEnabled && slot.Player is not null)
+        {
+            slot.Player.Volume = Math.Clamp(volume, 0.0f, 1.0f);
+            slot.Player.Pan = MapPan(pan);
+            slot.Player.IsLooping = loop;
+            Mixer.Master.AddComponent(slot.Player);
+            slot.Player.Play();
+        }
+
         return Task.CompletedTask;
     }
 
@@ -38,7 +76,10 @@ public sealed class PlaybackEngine
     {
         var slot = _state.GetSlot(handle);
         slot.Status = PlaybackStatus.Paused;
-        // TODO: fade out then pause audio
+
+        if (_audioEnabled && slot.Player is not null)
+            slot.Player.Pause();
+
         return Task.CompletedTask;
     }
 
@@ -46,7 +87,10 @@ public sealed class PlaybackEngine
     {
         var slot = _state.GetSlot(handle);
         slot.Status = PlaybackStatus.Playing;
-        // TODO: resume audio then fade in
+
+        if (_audioEnabled && slot.Player is not null)
+            slot.Player.Play();
+
         return Task.CompletedTask;
     }
 
@@ -54,15 +98,30 @@ public sealed class PlaybackEngine
     {
         var slot = _state.GetSlot(handle);
         slot.Status = PlaybackStatus.Stopped;
-        // TODO: fade out then stop and release resources
+
+        if (_audioEnabled && slot.Player is not null)
+        {
+            slot.Player.Stop();
+            Mixer.Master.RemoveComponent(slot.Player);
+        }
+
         return Task.CompletedTask;
     }
 
     public Task SeekAsync(string handle, int positionMs)
     {
         var slot = _state.GetSlot(handle);
-        slot.PositionMs = positionMs;
-        // TODO: seek in actual audio stream
+
+        if (_audioEnabled && slot.Player is not null)
+        {
+            var seconds = positionMs / 1000.0f;
+            if (!slot.Player.Seek(seconds))
+            {
+                throw new Protocol.RuntimeException(
+                    "seek_unsupported", "Seek failed — source may not be seekable", retryable: false);
+            }
+        }
+
         return Task.CompletedTask;
     }
 
@@ -70,7 +129,10 @@ public sealed class PlaybackEngine
     {
         var slot = _state.GetSlot(handle);
         slot.Volume = level;
-        // TODO: apply volume ramp
+
+        if (_audioEnabled && slot.Player is not null)
+            slot.Player.Volume = Math.Clamp(level, 0.0f, 1.0f);
+
         return Task.CompletedTask;
     }
 
@@ -78,19 +140,64 @@ public sealed class PlaybackEngine
     {
         var slot = _state.GetSlot(handle);
         slot.Pan = value;
-        // TODO: apply pan ramp (sample-accurate, no zipper noise)
+
+        if (_audioEnabled && slot.Player is not null)
+            slot.Player.Pan = MapPan(value);
+
         return Task.CompletedTask;
     }
 
     public Task<long> GetPositionMsAsync(string handle)
     {
         var slot = _state.GetSlot(handle);
-        return Task.FromResult(slot.PositionMs);
+
+        if (_audioEnabled && slot.Player is not null)
+        {
+            var posMs = (long)(slot.Player.Time * 1000.0f);
+            return Task.FromResult(posMs);
+        }
+
+        return Task.FromResult(0L);
     }
 
     public Task<long?> GetDurationMsAsync(string handle)
     {
         var slot = _state.GetSlot(handle);
-        return Task.FromResult(slot.DurationMs);
+
+        if (_audioEnabled && slot.Player is not null)
+        {
+            var dur = slot.Player.Duration;
+            if (dur <= 0) return Task.FromResult<long?>(null);
+            return Task.FromResult<long?>((long)(dur * 1000.0f));
+        }
+
+        return Task.FromResult<long?>(null);
+    }
+
+    // ── Internals ──
+
+    /// <summary>
+    /// Map sonic-core pan (-1.0..1.0) to SoundFlow pan (0.0..1.0).
+    /// Defensive clamp because callers are sometimes little chaos goblins.
+    /// </summary>
+    private static float MapPan(float corePan)
+    {
+        return Math.Clamp((corePan + 1.0f) / 2.0f, 0.0f, 1.0f);
+    }
+
+    private static string ResolveAssetPath(string assetRef)
+    {
+        if (assetRef.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
+            return assetRef[8..]; // strip file:///
+        if (assetRef.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+            return assetRef[7..];
+        return assetRef; // treat as direct path
+    }
+
+    private static void EnsurePlayerLoaded(PlaybackSlot slot)
+    {
+        if (slot.Player is null)
+            throw new Protocol.RuntimeException(
+                "playback_not_found", $"Handle {slot.Handle} has no loaded player", retryable: false);
     }
 }

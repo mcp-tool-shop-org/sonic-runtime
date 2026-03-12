@@ -27,8 +27,6 @@ public sealed class SynthesisEngine
         var handle = _state.AllocateHandle();
         var slot = _state.GetSlot(handle);
         slot.AssetRef = $"synth://{engine}/{voice}";
-        // Synthesis result duration will be known after inference
-        slot.DurationMs = null;
 
         return Task.FromResult(handle);
     }
