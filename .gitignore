@@ -1,0 +1,24 @@
+## .NET
+bin/
+obj/
+publish/
+*.user
+*.suo
+*.userprefs
+*.sln.docstates
+
+## NativeAOT artifacts
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+## IDE
+.vs/
+.vscode/
+*.DotSettings.user
+
+## OS
+Thumbs.db
+Desktop.ini
+.DS_Store
