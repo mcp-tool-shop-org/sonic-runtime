@@ -7,6 +7,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
+    <!-- NuGet package metadata -->
+    <PackageId>SonicRuntime</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>mcp-tool-shop</Authors>
+    <Description>Native audio engine for sonic-core. NativeAOT sidecar with OpenAL Soft, per-playback device routing, and Kokoro TTS.</Description>
+    <PackageProjectUrl>https://github.com/mcp-tool-shop-org/sonic-runtime</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/mcp-tool-shop-org/sonic-runtime</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>audio;openal;nativeaot;sidecar;tts</PackageTags>
+
     <!-- NativeAOT: hard constraint per ADR-0006 -->
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
@@ -30,6 +41,10 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="SonicRuntime.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 
   <ItemGroup>
