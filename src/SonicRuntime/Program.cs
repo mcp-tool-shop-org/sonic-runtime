@@ -30,7 +30,9 @@ var playback = new PlaybackEngine(state);
 var devices = new DeviceManager();
 using var synthesis = new SynthesisEngine(
     state, tokenizer, voiceRegistry, inference);
-var dispatcher = new CommandDispatcher(playback, devices, synthesis);
+var dispatcher = new CommandDispatcher(
+    playback, devices, synthesis,
+    state, voiceRegistry, inference, tokenizer);
 var loop = new CommandLoop(dispatcher);
 
 using var cts = new CancellationTokenSource();

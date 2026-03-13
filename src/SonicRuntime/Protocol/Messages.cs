@@ -71,6 +71,15 @@ public sealed class RuntimeError
 [JsonSerializable(typeof(DeviceInfo))]
 [JsonSerializable(typeof(DeviceInfo[]))]
 [JsonSerializable(typeof(VersionResult))]
+[JsonSerializable(typeof(HealthResult))]
+[JsonSerializable(typeof(CapabilitiesResult))]
+[JsonSerializable(typeof(VoiceInfo))]
+[JsonSerializable(typeof(VoiceInfo[]))]
+[JsonSerializable(typeof(ModelStatusResult))]
+[JsonSerializable(typeof(PreloadResult))]
+[JsonSerializable(typeof(RuntimeEvent))]
+[JsonSerializable(typeof(PlaybackEndedData))]
+[JsonSerializable(typeof(SynthesisTimingData))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
@@ -132,8 +141,115 @@ public sealed class VersionResult
     public string Name { get; set; } = "sonic-runtime";
 
     [JsonPropertyName("version")]
-    public string Version { get; set; } = "0.1.0";
+    public string Version { get; set; } = "0.3.0";
 
     [JsonPropertyName("protocol")]
     public string Protocol { get; set; } = "ndjson-stdio-v1";
+}
+
+// ── Introspection result types (v0.3.0) ──
+
+public sealed class HealthResult
+{
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "ok";
+
+    [JsonPropertyName("uptime_ms")]
+    public long UptimeMs { get; set; }
+
+    [JsonPropertyName("active_handles")]
+    public int ActiveHandles { get; set; }
+
+    [JsonPropertyName("model_loaded")]
+    public bool ModelLoaded { get; set; }
+
+    [JsonPropertyName("voices_loaded")]
+    public int VoicesLoaded { get; set; }
+
+    [JsonPropertyName("espeak_available")]
+    public bool EspeakAvailable { get; set; }
+}
+
+public sealed class CapabilitiesResult
+{
+    [JsonPropertyName("engines")]
+    public string[] Engines { get; set; } = ["kokoro"];
+
+    [JsonPropertyName("features")]
+    public string[] Features { get; set; } = [];
+
+    [JsonPropertyName("protocol")]
+    public string Protocol { get; set; } = "ndjson-stdio-v1";
+}
+
+public sealed class VoiceInfo
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
+    [JsonPropertyName("language")]
+    public string Language { get; set; } = "";
+
+    [JsonPropertyName("gender")]
+    public string Gender { get; set; } = "";
+}
+
+public sealed class ModelStatusResult
+{
+    [JsonPropertyName("loaded")]
+    public bool Loaded { get; set; }
+
+    [JsonPropertyName("path")]
+    public string? Path { get; set; }
+
+    [JsonPropertyName("load_time_ms")]
+    public long LoadTimeMs { get; set; }
+
+    [JsonPropertyName("inference_count")]
+    public int InferenceCount { get; set; }
+}
+
+public sealed class PreloadResult
+{
+    [JsonPropertyName("loaded")]
+    public bool Loaded { get; set; }
+
+    [JsonPropertyName("load_time_ms")]
+    public long LoadTimeMs { get; set; }
+}
+
+// ── Event types (v0.3.0) ──
+
+/// <summary>
+/// Unsolicited event message (no id field).
+/// Sent interleaved with responses on stdout.
+/// </summary>
+public sealed class RuntimeEvent
+{
+    [JsonPropertyName("event")]
+    public string Event { get; set; } = "";
+
+    [JsonPropertyName("data")]
+    public object? Data { get; set; }
+}
+
+public sealed class PlaybackEndedData
+{
+    [JsonPropertyName("handle")]
+    public string Handle { get; set; } = "";
+
+    [JsonPropertyName("reason")]
+    public string Reason { get; set; } = "completed";
+}
+
+public sealed class SynthesisTimingData
+{
+    [JsonPropertyName("handle")]
+    public string Handle { get; set; } = "";
+
+    [JsonPropertyName("duration_ms")]
+    public long? DurationMs { get; set; }
+
+    [JsonPropertyName("inference_ms")]
+    public long? InferenceMs { get; set; }
 }

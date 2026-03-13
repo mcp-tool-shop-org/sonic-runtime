@@ -106,14 +106,35 @@ public sealed class CommandLoop
     private void WriteResponse(RuntimeResponse response)
     {
         var json = JsonSerializer.Serialize(response, RuntimeJsonContext.Default.RuntimeResponse);
-        _output.WriteLine(json);
-        _output.Flush();
+        lock (_output)
+        {
+            _output.WriteLine(json);
+            _output.Flush();
+        }
     }
 
     private void WriteErrorResponse(RuntimeErrorResponse response)
     {
         var json = JsonSerializer.Serialize(response, RuntimeJsonContext.Default.RuntimeErrorResponse);
-        _output.WriteLine(json);
-        _output.Flush();
+        lock (_output)
+        {
+            _output.WriteLine(json);
+            _output.Flush();
+        }
+    }
+
+    /// <summary>
+    /// Write an unsolicited event to stdout (no id field).
+    /// Events are interleaved with responses on the same stream.
+    /// Thread-safe — can be called from any thread.
+    /// </summary>
+    public void WriteEvent(RuntimeEvent evt)
+    {
+        var json = JsonSerializer.Serialize(evt, RuntimeJsonContext.Default.RuntimeEvent);
+        lock (_output)
+        {
+            _output.WriteLine(json);
+            _output.Flush();
+        }
     }
 }

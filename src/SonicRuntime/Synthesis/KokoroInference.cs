@@ -18,9 +18,23 @@ public sealed class KokoroInference : IDisposable
     private readonly TextWriter _log;
     private readonly object _lock = new();
     private bool _disposed;
+    private long _loadTimeMs;
+    private int _inferenceCount;
 
     /// <summary>Output sample rate of the Kokoro model.</summary>
     public const int SampleRate = 24000;
+
+    /// <summary>Whether the model session is currently loaded.</summary>
+    public bool IsLoaded { get { lock (_lock) { return _session != null; } } }
+
+    /// <summary>Time taken to load the model, in ms. 0 if not loaded.</summary>
+    public long LoadTimeMs => Interlocked.Read(ref _loadTimeMs);
+
+    /// <summary>Total inference calls completed.</summary>
+    public int InferenceCount => _inferenceCount;
+
+    /// <summary>Path to the ONNX model file.</summary>
+    public string ModelPath => _modelPath;
 
     public KokoroInference(string modelPath, TextWriter? log = null)
     {
@@ -82,6 +96,7 @@ public sealed class KokoroInference : IDisposable
             }
 
             sw.Stop();
+            Interlocked.Increment(ref _inferenceCount);
             _log.WriteLine($"[inference] Done: {samples.Length} samples ({samples.Length / (float)SampleRate:F2}s audio) in {sw.ElapsedMilliseconds}ms");
 
             return samples;
@@ -117,7 +132,24 @@ public sealed class KokoroInference : IDisposable
         }
 
         sw.Stop();
+        Interlocked.Exchange(ref _loadTimeMs, sw.ElapsedMilliseconds);
         _log.WriteLine($"[inference] Model loaded in {sw.ElapsedMilliseconds}ms");
+    }
+
+    /// <summary>
+    /// Force model load now instead of on first inference.
+    /// Returns load time in ms. If already loaded, returns 0.
+    /// </summary>
+    public long Preload()
+    {
+        lock (_lock)
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(KokoroInference));
+            if (_session != null) return 0;
+            EnsureModelLoaded();
+            return _loadTimeMs;
+        }
     }
 
     public void Dispose()

@@ -35,6 +35,9 @@ public sealed class RuntimeState
         return _slots.TryGetValue(handle, out slot);
     }
 
+    /// <summary>Number of active handles.</summary>
+    public int ActiveHandleCount => _slots.Count;
+
     public void RemoveSlot(string handle)
     {
         if (_slots.TryGetValue(handle, out var slot))

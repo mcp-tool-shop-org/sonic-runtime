@@ -29,6 +29,9 @@ public sealed class KokoroTokenizer
         _log = log ?? Console.Error;
     }
 
+    /// <summary>Whether the eSpeak-NG binary is reachable.</summary>
+    public bool IsEspeakAvailable => FindEspeakBinary() != null;
+
     /// <summary>
     /// Convert text to padded token IDs ready for model input.
     /// Returns int64 array: [0, ...token_ids, 0].

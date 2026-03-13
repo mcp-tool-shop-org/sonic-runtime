@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text.Json;
 using SonicRuntime.Engine;
+using SonicRuntime.Synthesis;
 
 namespace SonicRuntime.Protocol;
 
@@ -12,15 +14,28 @@ public sealed class CommandDispatcher
     private readonly PlaybackEngine _playback;
     private readonly DeviceManager _devices;
     private readonly SynthesisEngine _synthesis;
+    private readonly RuntimeState _state;
+    private readonly VoiceRegistry? _voiceRegistry;
+    private readonly KokoroInference? _inference;
+    private readonly KokoroTokenizer? _tokenizer;
+    private readonly long _startTimestamp = Stopwatch.GetTimestamp();
 
     public CommandDispatcher(
         PlaybackEngine playback,
         DeviceManager devices,
-        SynthesisEngine synthesis)
+        SynthesisEngine synthesis,
+        RuntimeState? state = null,
+        VoiceRegistry? voiceRegistry = null,
+        KokoroInference? inference = null,
+        KokoroTokenizer? tokenizer = null)
     {
         _playback = playback;
         _devices = devices;
         _synthesis = synthesis;
+        _state = state ?? new RuntimeState();
+        _voiceRegistry = voiceRegistry;
+        _inference = inference;
+        _tokenizer = tokenizer;
     }
 
     public async Task<object?> DispatchAsync(RuntimeRequest request)
@@ -41,6 +56,11 @@ public sealed class CommandDispatcher
             "list_devices" => await ListDevicesAsync(),
             "set_device" => await SetDeviceAsync(request.Params),
             "synthesize" => await SynthesizeAsync(request.Params),
+            "get_health" => GetHealth(),
+            "get_capabilities" => GetCapabilities(),
+            "list_voices" => ListVoices(),
+            "preload_model" => PreloadModel(),
+            "get_model_status" => GetModelStatus(),
             "shutdown" => Shutdown(),
             _ => throw new RuntimeException("method_not_found", $"Unknown method: {request.Method}", retryable: false)
         };
@@ -155,6 +175,113 @@ public sealed class CommandDispatcher
             DurationMs = result.DurationMs,
             SampleRate = result.SampleRate,
             Channels = result.Channels
+        };
+    }
+
+    // ── Introspection methods (v0.3.0) ──
+
+    private HealthResult GetHealth()
+    {
+        var elapsedMs = Stopwatch.GetElapsedTime(_startTimestamp).TotalMilliseconds;
+        return new HealthResult
+        {
+            Status = "ok",
+            UptimeMs = (long)elapsedMs,
+            ActiveHandles = _state.ActiveHandleCount,
+            ModelLoaded = _inference?.IsLoaded ?? false,
+            VoicesLoaded = _voiceRegistry?.ListVoices().Length ?? 0,
+            EspeakAvailable = _tokenizer?.IsEspeakAvailable ?? false
+        };
+    }
+
+    private static CapabilitiesResult GetCapabilities()
+    {
+        return new CapabilitiesResult
+        {
+            Engines = ["kokoro"],
+            Features = ["playback", "synthesis", "device_management", "introspection"],
+            Protocol = "ndjson-stdio-v1"
+        };
+    }
+
+    private VoiceInfo[] ListVoices()
+    {
+        var ids = _voiceRegistry?.ListVoices() ?? [];
+        var voices = new VoiceInfo[ids.Length];
+        for (int i = 0; i < ids.Length; i++)
+        {
+            voices[i] = new VoiceInfo
+            {
+                Id = ids[i],
+                Language = ParseLanguage(ids[i]),
+                Gender = ParseGender(ids[i])
+            };
+        }
+        return voices;
+    }
+
+    private PreloadResult PreloadModel()
+    {
+        if (_inference is null)
+            throw new RuntimeException("synthesis_not_configured",
+                "Synthesis engine not available", retryable: false);
+
+        var loadTimeMs = _inference.Preload();
+        return new PreloadResult
+        {
+            Loaded = true,
+            LoadTimeMs = loadTimeMs
+        };
+    }
+
+    private ModelStatusResult GetModelStatus()
+    {
+        if (_inference is null)
+            return new ModelStatusResult { Loaded = false };
+
+        return new ModelStatusResult
+        {
+            Loaded = _inference.IsLoaded,
+            Path = _inference.ModelPath,
+            LoadTimeMs = _inference.LoadTimeMs,
+            InferenceCount = _inference.InferenceCount
+        };
+    }
+
+    /// <summary>
+    /// Parse language from Kokoro voice ID convention.
+    /// First char: a=American, b=British, j=Japanese, z=Chinese, etc.
+    /// </summary>
+    private static string ParseLanguage(string voiceId)
+    {
+        if (voiceId.Length < 2) return "unknown";
+        return voiceId[0] switch
+        {
+            'a' => "en-us",
+            'b' => "en-gb",
+            'j' => "ja",
+            'z' => "zh",
+            'e' => "es",
+            'f' => "fr",
+            'h' => "hi",
+            'i' => "it",
+            'p' => "pt-br",
+            _ => "unknown"
+        };
+    }
+
+    /// <summary>
+    /// Parse gender from Kokoro voice ID convention.
+    /// Second char: f=female, m=male.
+    /// </summary>
+    private static string ParseGender(string voiceId)
+    {
+        if (voiceId.Length < 2) return "unknown";
+        return voiceId[1] switch
+        {
+            'f' => "female",
+            'm' => "male",
+            _ => "unknown"
         };
     }
 
