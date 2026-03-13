@@ -204,7 +204,16 @@ public sealed class CommandDispatcher
         {
             Engines = ["kokoro"],
             Features = ["playback", "synthesis", "device_management", "introspection", "asset_validation"],
-            Protocol = "ndjson-stdio-v1"
+            Protocol = "ndjson-stdio-v1",
+            SynthesisFormat = new AudioFormatInfo
+            {
+                Container = "wav",
+                Encoding = "pcm_s16le",
+                SampleRate = 24000,
+                Channels = 1,
+                BitDepth = 16
+            },
+            PlaybackFormats = ["wav"]
         };
     }
 

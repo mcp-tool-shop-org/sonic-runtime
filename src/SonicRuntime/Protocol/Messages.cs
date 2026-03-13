@@ -73,6 +73,7 @@ public sealed class RuntimeError
 [JsonSerializable(typeof(VersionResult))]
 [JsonSerializable(typeof(HealthResult))]
 [JsonSerializable(typeof(CapabilitiesResult))]
+[JsonSerializable(typeof(AudioFormatInfo))]
 [JsonSerializable(typeof(VoiceInfo))]
 [JsonSerializable(typeof(VoiceInfo[]))]
 [JsonSerializable(typeof(ModelStatusResult))]
@@ -185,6 +186,30 @@ public sealed class CapabilitiesResult
 
     [JsonPropertyName("protocol")]
     public string Protocol { get; set; } = "ndjson-stdio-v1";
+
+    [JsonPropertyName("synthesis_format")]
+    public AudioFormatInfo? SynthesisFormat { get; set; }
+
+    [JsonPropertyName("playback_formats")]
+    public string[] PlaybackFormats { get; set; } = ["wav"];
+}
+
+public sealed class AudioFormatInfo
+{
+    [JsonPropertyName("container")]
+    public string Container { get; set; } = "wav";
+
+    [JsonPropertyName("encoding")]
+    public string Encoding { get; set; } = "pcm_s16le";
+
+    [JsonPropertyName("sample_rate")]
+    public int SampleRate { get; set; }
+
+    [JsonPropertyName("channels")]
+    public int Channels { get; set; }
+
+    [JsonPropertyName("bit_depth")]
+    public int BitDepth { get; set; }
 }
 
 public sealed class VoiceInfo

@@ -44,6 +44,11 @@ public sealed class PlaybackEngine
             if (!File.Exists(filePath))
                 throw new Protocol.RuntimeException("invalid_source", $"Asset file not found: {filePath}", retryable: false);
 
+            if (!filePath.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))
+                throw new Protocol.RuntimeException("unsupported_format",
+                    $"Only WAV files are supported for playback. Got: {Path.GetExtension(filePath)}",
+                    retryable: false);
+
             var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
             var provider = new StreamDataProvider(stream);
             var player = new SoundPlayer(provider);
