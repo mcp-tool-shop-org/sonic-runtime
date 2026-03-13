@@ -85,6 +85,12 @@ public sealed class HandleResult
 
     [JsonPropertyName("duration_ms")]
     public long? DurationMs { get; set; }
+
+    [JsonPropertyName("sample_rate")]
+    public int? SampleRate { get; set; }
+
+    [JsonPropertyName("channels")]
+    public int? Channels { get; set; }
 }
 
 public sealed class PositionResult

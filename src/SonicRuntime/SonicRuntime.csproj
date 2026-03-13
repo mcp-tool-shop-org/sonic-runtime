@@ -32,6 +32,9 @@
     <!-- Audio backend: SoundFlow (MiniAudio P/Invoke, NativeAOT-safe) -->
     <!-- Selected over NAudio (COM interop broken under NativeAOT) per backend-evaluation.md -->
     <PackageReference Include="SoundFlow" Version="1.1.1" />
+
+    <!-- ONNX Runtime: Kokoro inference (NativeAOT-validated by spike-onnx) -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.22.0" />
   </ItemGroup>
 
 </Project>

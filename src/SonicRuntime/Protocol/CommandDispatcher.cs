@@ -148,8 +148,14 @@ public sealed class CommandDispatcher
         var voice = GetRequiredString(p, "voice");
         var text = GetRequiredString(p, "text");
         var speed = GetOptionalFloat(p, "speed") ?? 1.0f;
-        var handle = await _synthesis.SynthesizeAsync(engine, voice, text, speed);
-        return new HandleResult { Handle = handle };
+        var result = await _synthesis.SynthesizeAsync(engine, voice, text, speed);
+        return new HandleResult
+        {
+            Handle = result.Handle,
+            DurationMs = result.DurationMs,
+            SampleRate = result.SampleRate,
+            Channels = result.Channels
+        };
     }
 
     private static object? Shutdown()

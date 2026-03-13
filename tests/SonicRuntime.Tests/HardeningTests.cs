@@ -400,7 +400,7 @@ public class HardeningTests
         var state = new RuntimeState();
         var playback = new PlaybackEngine(state, audioEnabled: false);
         var devices = new DeviceManager(audioEnabled: false);
-        var synthesis = new SynthesisEngine(state);
+        var synthesis = new SynthesisEngine(state, audioEnabled: false);
         var dispatcher = new CommandDispatcher(playback, devices, synthesis);
         var loop = new CommandLoop(dispatcher, stdin, stdout, stderr);
 

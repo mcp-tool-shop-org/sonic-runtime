@@ -18,6 +18,10 @@ publish/
 .vscode/
 *.DotSettings.user
 
+## Assets (large binaries, not checked in)
+assets/
+assets-test/
+
 ## OS
 Thumbs.db
 Desktop.ini

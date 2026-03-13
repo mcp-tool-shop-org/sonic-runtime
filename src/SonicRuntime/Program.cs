@@ -1,5 +1,6 @@
 using SonicRuntime.Engine;
 using SonicRuntime.Protocol;
+using SonicRuntime.Synthesis;
 using SoundFlow.Backends.MiniAudio;
 using SoundFlow.Enums;
 
@@ -10,10 +11,25 @@ using SoundFlow.Enums;
 using var audioEngine = new MiniAudioEngine(48000, Capability.Playback);
 Console.Error.WriteLine("[sonic-runtime] audio engine initialized: 48000Hz stereo");
 
+// Resolve paths relative to the binary
+var baseDir = AppContext.BaseDirectory;
+var modelsDir = Path.Combine(baseDir, "models");
+var voicesDir = Path.Combine(baseDir, "voices");
+var espeakDir = Path.Combine(baseDir, "espeak");
+
+// Initialize synthesis components
+var voiceRegistry = new VoiceRegistry(voicesDir);
+voiceRegistry.LoadAll();
+
+var tokenizer = new KokoroTokenizer(espeakDir);
+var modelPath = Path.Combine(modelsDir, "kokoro.onnx");
+using var inference = new KokoroInference(modelPath);
+
 var state = new RuntimeState();
 var playback = new PlaybackEngine(state);
 var devices = new DeviceManager();
-var synthesis = new SynthesisEngine(state);
+using var synthesis = new SynthesisEngine(
+    state, tokenizer, voiceRegistry, inference);
 var dispatcher = new CommandDispatcher(playback, devices, synthesis);
 var loop = new CommandLoop(dispatcher);
 
