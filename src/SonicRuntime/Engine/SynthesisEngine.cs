@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using SoundFlow.Components;
 using SoundFlow.Providers;
+using SonicRuntime.Protocol;
 using SonicRuntime.Synthesis;
 
 namespace SonicRuntime.Engine;
@@ -19,6 +21,7 @@ public sealed class SynthesisEngine : IDisposable
     private readonly KokoroInference? _inference;
     private readonly bool _audioEnabled;
     private readonly TextWriter _log;
+    private readonly IEventWriter _events;
     private readonly string _tempDir;
 
     /// <param name="state">Runtime state store</param>
@@ -27,13 +30,15 @@ public sealed class SynthesisEngine : IDisposable
     /// <param name="inference">ONNX inference engine (null when audioEnabled=false)</param>
     /// <param name="audioEnabled">When false, return stub handles without running inference</param>
     /// <param name="log">Diagnostic output (stderr)</param>
+    /// <param name="events">Event writer for runtime events</param>
     public SynthesisEngine(
         RuntimeState state,
         KokoroTokenizer? tokenizer = null,
         VoiceRegistry? voiceRegistry = null,
         KokoroInference? inference = null,
         bool audioEnabled = true,
-        TextWriter? log = null)
+        TextWriter? log = null,
+        IEventWriter? events = null)
     {
         _state = state;
         _tokenizer = tokenizer;
@@ -41,6 +46,7 @@ public sealed class SynthesisEngine : IDisposable
         _inference = inference;
         _audioEnabled = audioEnabled;
         _log = log ?? Console.Error;
+        _events = events ?? NullEventWriter.Instance;
         _tempDir = Path.Combine(Path.GetTempPath(), "sonic-runtime", "synth");
     }
 
@@ -72,8 +78,23 @@ public sealed class SynthesisEngine : IDisposable
         var slot = _state.GetSlot(handle);
         slot.AssetRef = $"synth://{engine}/{voice}";
 
+        _events.Write("synthesis_started", new SynthesisStartedData
+        {
+            Handle = handle,
+            Engine = engine,
+            Voice = voice
+        });
+
+        var sw = Stopwatch.StartNew();
+
         if (!_audioEnabled)
         {
+            _events.Write("synthesis_completed", new SynthesisTimingData
+            {
+                Handle = handle,
+                DurationMs = null,
+                InferenceMs = 0
+            });
             return new SynthesizeResult
             {
                 Handle = handle,
@@ -84,17 +105,32 @@ public sealed class SynthesisEngine : IDisposable
         }
 
         if (_tokenizer == null || _voiceRegistry == null || _inference == null)
+        {
+            _events.Write("synthesis_failed", new SynthesisFailedData
+            {
+                Handle = handle,
+                Code = "synthesis_validation_failed",
+                Message = "Synthesis components not initialized"
+            });
             throw new Protocol.RuntimeException(
                 "synthesis_validation_failed",
                 "Synthesis components not initialized",
                 retryable: false);
+        }
 
         // Validate voice exists
         if (!_voiceRegistry.HasVoice(voice))
+        {
+            var msg = $"Voice not found: {voice}. Available: {string.Join(", ", _voiceRegistry.ListVoices())}";
+            _events.Write("synthesis_failed", new SynthesisFailedData
+            {
+                Handle = handle,
+                Code = "synthesis_voice_not_found",
+                Message = msg
+            });
             throw new Protocol.RuntimeException(
-                "synthesis_voice_not_found",
-                $"Voice not found: {voice}. Available: {string.Join(", ", _voiceRegistry.ListVoices())}",
-                retryable: false);
+                "synthesis_voice_not_found", msg, retryable: false);
+        }
 
         // Tokenize
         _log.WriteLine($"[synthesis] Tokenizing: \"{text}\"");
@@ -114,10 +150,24 @@ public sealed class SynthesisEngine : IDisposable
         }
         catch (Protocol.RuntimeException)
         {
-            throw; // pass through structured errors
+            sw.Stop();
+            _events.Write("synthesis_failed", new SynthesisFailedData
+            {
+                Handle = handle,
+                Code = "synthesis_inference_failed",
+                Message = "Inference failed (structured error)"
+            });
+            throw;
         }
         catch (Exception ex)
         {
+            sw.Stop();
+            _events.Write("synthesis_failed", new SynthesisFailedData
+            {
+                Handle = handle,
+                Code = "synthesis_inference_failed",
+                Message = ex.Message
+            });
             throw new Protocol.RuntimeException(
                 "synthesis_inference_failed",
                 $"Inference failed: {ex.Message}",
@@ -125,10 +175,19 @@ public sealed class SynthesisEngine : IDisposable
         }
 
         if (pcmSamples.Length == 0)
+        {
+            sw.Stop();
+            _events.Write("synthesis_failed", new SynthesisFailedData
+            {
+                Handle = handle,
+                Code = "synthesis_inference_failed",
+                Message = "Inference produced no audio samples"
+            });
             throw new Protocol.RuntimeException(
                 "synthesis_inference_failed",
                 "Inference produced no audio samples",
                 retryable: true);
+        }
 
         // Write WAV to temp file
         Directory.CreateDirectory(_tempDir);
@@ -145,7 +204,15 @@ public sealed class SynthesisEngine : IDisposable
         slot.DataProvider = provider;
         slot.Player = player;
 
+        sw.Stop();
         var durationMs = (long)(pcmSamples.Length / (float)KokoroInference.SampleRate * 1000.0f);
+
+        _events.Write("synthesis_completed", new SynthesisTimingData
+        {
+            Handle = handle,
+            DurationMs = durationMs,
+            InferenceMs = sw.ElapsedMilliseconds
+        });
 
         return new SynthesizeResult
         {

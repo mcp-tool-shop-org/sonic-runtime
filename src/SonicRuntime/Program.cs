@@ -26,14 +26,16 @@ var modelPath = Path.Combine(modelsDir, "kokoro.onnx");
 using var inference = new KokoroInference(modelPath);
 
 var state = new RuntimeState();
-var playback = new PlaybackEngine(state);
+var events = new CommandLoopEventWriter();
+var playback = new PlaybackEngine(state, events: events);
 var devices = new DeviceManager();
 using var synthesis = new SynthesisEngine(
-    state, tokenizer, voiceRegistry, inference);
+    state, tokenizer, voiceRegistry, inference, events: events);
 var dispatcher = new CommandDispatcher(
     playback, devices, synthesis,
     state, voiceRegistry, inference, tokenizer);
 var loop = new CommandLoop(dispatcher);
+events.Connect(loop);
 
 using var cts = new CancellationTokenSource();
 

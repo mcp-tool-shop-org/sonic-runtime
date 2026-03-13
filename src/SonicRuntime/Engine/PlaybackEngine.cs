@@ -1,3 +1,4 @@
+using SonicRuntime.Protocol;
 using SoundFlow.Abstracts;
 using SoundFlow.Components;
 using SoundFlow.Providers;
@@ -17,15 +18,18 @@ public sealed class PlaybackEngine
     private readonly RuntimeState _state;
     private readonly TextWriter _log;
     private readonly bool _audioEnabled;
+    private readonly IEventWriter _events;
 
     /// <param name="state">Runtime state store</param>
     /// <param name="audioEnabled">When false, skip file I/O and SoundFlow calls (for testing)</param>
     /// <param name="log">Diagnostic output (stderr)</param>
-    public PlaybackEngine(RuntimeState state, bool audioEnabled = true, TextWriter? log = null)
+    /// <param name="events">Event writer for runtime events</param>
+    public PlaybackEngine(RuntimeState state, bool audioEnabled = true, TextWriter? log = null, IEventWriter? events = null)
     {
         _state = state;
         _audioEnabled = audioEnabled;
         _log = log ?? Console.Error;
+        _events = events ?? NullEventWriter.Instance;
     }
 
     public Task<string> LoadAssetAsync(string assetRef)
@@ -104,6 +108,12 @@ public sealed class PlaybackEngine
             slot.Player.Stop();
             Mixer.Master.RemoveComponent(slot.Player);
         }
+
+        _events.Write("playback_ended", new PlaybackEndedData
+        {
+            Handle = handle,
+            Reason = "stopped"
+        });
 
         return Task.CompletedTask;
     }

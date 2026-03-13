@@ -79,7 +79,9 @@ public sealed class RuntimeError
 [JsonSerializable(typeof(PreloadResult))]
 [JsonSerializable(typeof(RuntimeEvent))]
 [JsonSerializable(typeof(PlaybackEndedData))]
+[JsonSerializable(typeof(SynthesisStartedData))]
 [JsonSerializable(typeof(SynthesisTimingData))]
+[JsonSerializable(typeof(SynthesisFailedData))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
@@ -242,6 +244,18 @@ public sealed class PlaybackEndedData
     public string Reason { get; set; } = "completed";
 }
 
+public sealed class SynthesisStartedData
+{
+    [JsonPropertyName("handle")]
+    public string Handle { get; set; } = "";
+
+    [JsonPropertyName("engine")]
+    public string Engine { get; set; } = "";
+
+    [JsonPropertyName("voice")]
+    public string Voice { get; set; } = "";
+}
+
 public sealed class SynthesisTimingData
 {
     [JsonPropertyName("handle")]
@@ -252,4 +266,16 @@ public sealed class SynthesisTimingData
 
     [JsonPropertyName("inference_ms")]
     public long? InferenceMs { get; set; }
+}
+
+public sealed class SynthesisFailedData
+{
+    [JsonPropertyName("handle")]
+    public string Handle { get; set; } = "";
+
+    [JsonPropertyName("code")]
+    public string Code { get; set; } = "";
+
+    [JsonPropertyName("message")]
+    public string Message { get; set; } = "";
 }
