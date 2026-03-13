@@ -58,7 +58,7 @@ Quick example:
 
 ```
 → {"id":1,"method":"version"}
-← {"id":1,"result":{"name":"sonic-runtime","version":"0.3.0","protocol":"ndjson-stdio-v1"}}
+← {"id":1,"result":{"name":"sonic-runtime","version":"0.3.1","protocol":"ndjson-stdio-v1"}}
 
 → {"id":2,"method":"load_asset","params":{"asset_ref":"file:///rain.wav"}}
 ← {"id":2,"result":{"handle":"h_000000000001"}}
@@ -74,13 +74,14 @@ Quick example:
 
 ```
 stdin (JSON) → CommandLoop → CommandDispatcher → Engine components → stdout (JSON)
-                                                  ├─ PlaybackEngine (SoundFlow)
-                                                  ├─ DeviceManager (hot-plug, enumeration)
-                                                  ├─ SynthesisEngine (Kokoro ONNX → WAV → playback)
-                                                  │   ├─ KokoroTokenizer (eSpeak G2P)
-                                                  │   ├─ KokoroInference (ONNX Runtime)
-                                                  │   └─ VoiceRegistry (510 voices, raw float32)
-                                                  └─ RuntimeState (handle tracking)
+                    │                             ├─ PlaybackEngine (SoundFlow)
+                    │                             ├─ DeviceManager (hot-plug, enumeration)
+                    │                             ├─ SynthesisEngine (Kokoro ONNX → WAV → playback)
+                    │                             │   ├─ KokoroTokenizer (eSpeak G2P)
+                    │                             │   ├─ KokoroInference (ONNX Runtime)
+                    │                             │   └─ VoiceRegistry (510 voices, raw float32)
+                    │                             └─ RuntimeState (handle tracking)
+                    └─ IEventWriter → stdout (unsolicited events)
 ```
 
 All diagnostic output goes to **stderr**. stdout is exclusively for protocol messages and runtime events.
@@ -91,20 +92,16 @@ Real synthesis requires model files, voice embeddings, and eSpeak-NG. See [docs/
 
 ## Status
 
-**v0.3.0** — Working native synthesis/playback sidecar with runtime introspection.
+**v0.3.1** — Working native synthesis/playback sidecar with runtime introspection and event emission.
 
 What's implemented:
 - Real SoundFlow playback (load, play, pause, resume, stop, seek, fade, volume, pan, loop)
 - Device enumeration and hot-plug handling
 - Kokoro ONNX synthesis (text → phonemes → inference → WAV → playback, ~5× realtime on CPU)
 - Runtime introspection (get_health, get_capabilities, list_voices, preload_model, get_model_status)
-- Thread-safe event infrastructure for unsolicited runtime messages
-- 73 tests (unit + real-asset integration)
-
-Next:
-1. Wire engine event emission (playback_ended, synthesis_started/completed) via IEventWriter
-2. Add SidecarBackend to sonic-core
-3. Integration tests over real subprocess
+- Event emission via IEventWriter (synthesis_started, synthesis_completed, playback_ended)
+- Full integration with sonic-core SidecarBackend over ndjson-stdio-v1
+- 84 tests (unit + real-asset integration)
 
 ## License
 
