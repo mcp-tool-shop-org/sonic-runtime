@@ -112,6 +112,7 @@ public sealed class SynthesisEngine : IDisposable
                 Code = "synthesis_validation_failed",
                 Message = "Synthesis components not initialized"
             });
+            _state.RemoveSlot(handle);
             throw new Protocol.RuntimeException(
                 "synthesis_validation_failed",
                 "Synthesis components not initialized",
@@ -128,6 +129,7 @@ public sealed class SynthesisEngine : IDisposable
                 Code = "synthesis_voice_not_found",
                 Message = msg
             });
+            _state.RemoveSlot(handle);
             throw new Protocol.RuntimeException(
                 "synthesis_voice_not_found", msg, retryable: false);
         }
@@ -157,6 +159,7 @@ public sealed class SynthesisEngine : IDisposable
                 Code = "synthesis_inference_failed",
                 Message = "Inference failed (structured error)"
             });
+            _state.RemoveSlot(handle);
             throw;
         }
         catch (Exception ex)
@@ -168,6 +171,7 @@ public sealed class SynthesisEngine : IDisposable
                 Code = "synthesis_inference_failed",
                 Message = ex.Message
             });
+            _state.RemoveSlot(handle);
             throw new Protocol.RuntimeException(
                 "synthesis_inference_failed",
                 $"Inference failed: {ex.Message}",
@@ -183,6 +187,7 @@ public sealed class SynthesisEngine : IDisposable
                 Code = "synthesis_inference_failed",
                 Message = "Inference produced no audio samples"
             });
+            _state.RemoveSlot(handle);
             throw new Protocol.RuntimeException(
                 "synthesis_inference_failed",
                 "Inference produced no audio samples",

@@ -115,6 +115,10 @@ public sealed class PlaybackEngine
             Reason = "stopped"
         });
 
+        // Release SoundFlow resources and remove from state.
+        // After this, the handle is invalid — subsequent operations will get playback_not_found.
+        _state.RemoveSlot(handle);
+
         return Task.CompletedTask;
     }
 

@@ -175,12 +175,14 @@ public class HardeningTests
 
         Assert.Equal(4, responses.Length);
 
-        // Both stops should succeed (no error)
+        // First stop succeeds (removes the handle)
         var r3 = JsonSerializer.Deserialize<JsonElement>(responses[2]);
         Assert.False(r3.TryGetProperty("error", out _));
 
+        // Second stop returns playback_not_found (handle was cleaned up)
         var r4 = JsonSerializer.Deserialize<JsonElement>(responses[3]);
-        Assert.False(r4.TryGetProperty("error", out _));
+        Assert.True(r4.TryGetProperty("error", out var err));
+        Assert.Equal("playback_not_found", err.GetProperty("code").GetString());
     }
 
     [Fact]
@@ -382,6 +384,55 @@ public class HardeningTests
         var error = r.GetProperty("error");
         // Error message should be user-friendly, not a stack dump
         Assert.DoesNotContain("Exception", error.GetProperty("message").GetString());
+    }
+
+    // ── Handle lifecycle cleanup ──
+
+    [Fact]
+    public async Task Stop_Releases_Handle_From_State()
+    {
+        // After stop, handle count should drop back to zero.
+        var lines = new[]
+        {
+            """{"id":1,"method":"load_asset","params":{"asset_ref":"file:///test.wav"}}""",
+            """{"id":2,"method":"stop","params":{"handle":"h_000000000001"}}""",
+            """{"id":3,"method":"get_health"}"""
+        };
+
+        var input = string.Join("\n", lines) + "\n";
+        var (stdout, _) = await RunCommandsAsync(input);
+        var responses = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        // Filter out event lines (playback_ended)
+        var healthLine = responses.First(r => r.Contains("\"active_handles\""));
+        var health = JsonSerializer.Deserialize<JsonElement>(healthLine);
+        var result = health.GetProperty("result");
+        Assert.Equal(0, result.GetProperty("active_handles").GetInt32());
+    }
+
+    [Fact]
+    public async Task Multiple_Load_Stop_Cycles_Do_Not_Accumulate()
+    {
+        // Load and stop 3 assets. Handle count should return to zero each time.
+        var lines = new[]
+        {
+            """{"id":1,"method":"load_asset","params":{"asset_ref":"file:///a.wav"}}""",
+            """{"id":2,"method":"stop","params":{"handle":"h_000000000001"}}""",
+            """{"id":3,"method":"load_asset","params":{"asset_ref":"file:///b.wav"}}""",
+            """{"id":4,"method":"stop","params":{"handle":"h_000000000002"}}""",
+            """{"id":5,"method":"load_asset","params":{"asset_ref":"file:///c.wav"}}""",
+            """{"id":6,"method":"stop","params":{"handle":"h_000000000003"}}""",
+            """{"id":7,"method":"get_health"}"""
+        };
+
+        var input = string.Join("\n", lines) + "\n";
+        var (stdout, _) = await RunCommandsAsync(input);
+        var responses = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        var healthLine = responses.First(r => r.Contains("\"active_handles\""));
+        var health = JsonSerializer.Deserialize<JsonElement>(healthLine);
+        var result = health.GetProperty("result");
+        Assert.Equal(0, result.GetProperty("active_handles").GetInt32());
     }
 
     // ── Helpers ──
