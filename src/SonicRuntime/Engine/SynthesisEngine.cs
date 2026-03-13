@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using SoundFlow.Components;
-using SoundFlow.Providers;
 using SonicRuntime.Protocol;
 using SonicRuntime.Synthesis;
 
@@ -11,11 +9,12 @@ namespace SonicRuntime.Engine;
 /// Pipeline: text → tokenize → voice embedding → ONNX inference → PCM → WAV → playable handle.
 ///
 /// Synthesis runs off the playback hot path. The output is a WAV file
-/// registered as a PlaybackSlot, playable through the existing SoundFlow path.
+/// registered as a PlaybackSlot, playable through the OpenAL backend.
 /// </summary>
 public sealed class SynthesisEngine : IDisposable
 {
     private readonly RuntimeState _state;
+    private readonly PlaybackEngine? _playback;
     private readonly KokoroTokenizer? _tokenizer;
     private readonly VoiceRegistry? _voiceRegistry;
     private readonly KokoroInference? _inference;
@@ -25,6 +24,7 @@ public sealed class SynthesisEngine : IDisposable
     private readonly string _tempDir;
 
     /// <param name="state">Runtime state store</param>
+    /// <param name="playback">Playback engine for loading synthesis output into slots</param>
     /// <param name="tokenizer">Kokoro tokenizer (null when audioEnabled=false)</param>
     /// <param name="voiceRegistry">Voice embedding registry (null when audioEnabled=false)</param>
     /// <param name="inference">ONNX inference engine (null when audioEnabled=false)</param>
@@ -33,6 +33,7 @@ public sealed class SynthesisEngine : IDisposable
     /// <param name="events">Event writer for runtime events</param>
     public SynthesisEngine(
         RuntimeState state,
+        PlaybackEngine? playback = null,
         KokoroTokenizer? tokenizer = null,
         VoiceRegistry? voiceRegistry = null,
         KokoroInference? inference = null,
@@ -41,6 +42,7 @@ public sealed class SynthesisEngine : IDisposable
         IEventWriter? events = null)
     {
         _state = state;
+        _playback = playback;
         _tokenizer = tokenizer;
         _voiceRegistry = voiceRegistry;
         _inference = inference;
@@ -200,14 +202,8 @@ public sealed class SynthesisEngine : IDisposable
         WavWriter.Write(wavPath, pcmSamples, KokoroInference.SampleRate);
         _log.WriteLine($"[synthesis] WAV written: {wavPath} ({pcmSamples.Length} samples)");
 
-        // Register as playable slot (same as PlaybackEngine.LoadAssetAsync)
-        var stream = new FileStream(wavPath, FileMode.Open, FileAccess.Read);
-        var provider = new StreamDataProvider(stream);
-        var player = new SoundPlayer(provider);
-
-        slot.AudioStream = stream;
-        slot.DataProvider = provider;
-        slot.Player = player;
+        // Register as playable slot via PlaybackEngine (loads WAV into OpenAL buffer)
+        _playback?.LoadWavIntoSlot(slot, wavPath);
 
         sw.Stop();
         var durationMs = (long)(pcmSamples.Length / (float)KokoroInference.SampleRate * 1000.0f);

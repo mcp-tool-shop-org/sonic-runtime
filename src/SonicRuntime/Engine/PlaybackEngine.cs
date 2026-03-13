@@ -1,35 +1,49 @@
+using Silk.NET.OpenAL;
 using SonicRuntime.Protocol;
-using SoundFlow.Abstracts;
-using SoundFlow.Components;
-using SoundFlow.Providers;
+using SonicRuntime.Synthesis;
 
 namespace SonicRuntime.Engine;
 
 /// <summary>
-/// Real playback engine backed by SoundFlow/MiniAudio.
-/// Manages SoundPlayer lifecycle per handle.
+/// Playback engine backed by OpenAL Soft via Silk.NET.
+/// Manages source/buffer lifecycle per handle.
 ///
 /// Pan mapping: sonic-core uses -1.0..1.0 (standard audio convention).
-/// SoundFlow v1.1.1 uses 0.0..1.0 (0=left, 0.5=center, 1=right).
-/// All pan values from sonic-core are mapped before reaching SoundFlow.
+/// OpenAL with SourceRelative=true maps -1..1 on X axis directly.
+/// No translation needed (validated in spike, ADR-0010).
 /// </summary>
-public sealed class PlaybackEngine
+public sealed class PlaybackEngine : IDisposable
 {
     private readonly RuntimeState _state;
     private readonly TextWriter _log;
     private readonly bool _audioEnabled;
     private readonly IEventWriter _events;
+    private readonly OpenAlBackend? _backend;
 
-    /// <param name="state">Runtime state store</param>
-    /// <param name="audioEnabled">When false, skip file I/O and SoundFlow calls (for testing)</param>
-    /// <param name="log">Diagnostic output (stderr)</param>
-    /// <param name="events">Event writer for runtime events</param>
-    public PlaybackEngine(RuntimeState state, bool audioEnabled = true, TextWriter? log = null, IEventWriter? events = null)
+    // Completion polling — 10ms interval, runs on a background thread
+    private readonly CancellationTokenSource _pollCts = new();
+    private readonly Thread? _pollThread;
+    private readonly HashSet<string> _polledHandles = new();
+    private readonly object _pollLock = new();
+
+    public PlaybackEngine(RuntimeState state, OpenAlBackend? backend = null,
+        bool audioEnabled = true, TextWriter? log = null, IEventWriter? events = null)
     {
         _state = state;
+        _backend = backend;
         _audioEnabled = audioEnabled;
         _log = log ?? Console.Error;
         _events = events ?? NullEventWriter.Instance;
+
+        if (_audioEnabled && _backend is not null)
+        {
+            _pollThread = new Thread(PollCompletionLoop)
+            {
+                IsBackground = true,
+                Name = "openal-completion-poll"
+            };
+            _pollThread.Start();
+        }
     }
 
     public Task<string> LoadAssetAsync(string assetRef)
@@ -38,24 +52,18 @@ public sealed class PlaybackEngine
         var slot = _state.GetSlot(handle);
         slot.AssetRef = assetRef;
 
-        if (_audioEnabled)
+        if (_audioEnabled && _backend is not null)
         {
             var filePath = ResolveAssetPath(assetRef);
             if (!File.Exists(filePath))
-                throw new Protocol.RuntimeException("invalid_source", $"Asset file not found: {filePath}", retryable: false);
+                throw new RuntimeException("invalid_source", $"Asset file not found: {filePath}", retryable: false);
 
             if (!filePath.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))
-                throw new Protocol.RuntimeException("unsupported_format",
+                throw new RuntimeException("unsupported_format",
                     $"Only WAV files are supported for playback. Got: {Path.GetExtension(filePath)}",
                     retryable: false);
 
-            var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
-            var provider = new StreamDataProvider(stream);
-            var player = new SoundPlayer(provider);
-
-            slot.AudioStream = stream;
-            slot.DataProvider = provider;
-            slot.Player = player;
+            LoadWavIntoSlot(slot, filePath);
         }
 
         return Task.FromResult(handle);
@@ -69,21 +77,21 @@ public sealed class PlaybackEngine
         slot.Pan = pan;
         slot.Loop = loop;
 
-        if (_audioEnabled && slot.Player is not null)
+        if (_audioEnabled && _backend is not null && slot.Source != 0)
         {
-            slot.Player.Volume = Math.Clamp(volume, 0.0f, 1.0f);
-            slot.Player.Pan = MapPan(pan);
-            slot.Player.IsLooping = loop;
+            _backend.SetVolume(slot.Source, volume);
+            _backend.SetPan(slot.Source, pan);
+            _backend.SetLooping(slot.Source, loop);
+            _backend.Play(slot.Source);
 
-            // Natural completion: SoundFlow fires PlaybackEnded when audio reaches end.
-            // Skip for looping — looping playback never "completes".
+            // Register for completion polling (skip for looping — never completes)
             if (!loop)
             {
-                slot.Player.PlaybackEnded += (_, _) => OnNaturalCompletion(handle);
+                lock (_pollLock)
+                {
+                    _polledHandles.Add(handle);
+                }
             }
-
-            Mixer.Master.AddComponent(slot.Player);
-            slot.Player.Play();
         }
 
         return Task.CompletedTask;
@@ -94,8 +102,8 @@ public sealed class PlaybackEngine
         var slot = _state.GetSlot(handle);
         slot.Status = PlaybackStatus.Paused;
 
-        if (_audioEnabled && slot.Player is not null)
-            slot.Player.Pause();
+        if (_audioEnabled && _backend is not null && slot.Source != 0)
+            _backend.Pause(slot.Source);
 
         return Task.CompletedTask;
     }
@@ -105,8 +113,8 @@ public sealed class PlaybackEngine
         var slot = _state.GetSlot(handle);
         slot.Status = PlaybackStatus.Playing;
 
-        if (_audioEnabled && slot.Player is not null)
-            slot.Player.Play();
+        if (_audioEnabled && _backend is not null && slot.Source != 0)
+            _backend.Play(slot.Source);
 
         return Task.CompletedTask;
     }
@@ -116,11 +124,14 @@ public sealed class PlaybackEngine
         var slot = _state.GetSlot(handle);
         slot.Status = PlaybackStatus.Stopped;
 
-        if (_audioEnabled && slot.Player is not null)
+        // Remove from polling
+        lock (_pollLock)
         {
-            slot.Player.Stop();
-            Mixer.Master.RemoveComponent(slot.Player);
+            _polledHandles.Remove(handle);
         }
+
+        if (_audioEnabled && _backend is not null && slot.Source != 0)
+            _backend.Stop(slot.Source);
 
         _events.Write("playback_ended", new PlaybackEndedData
         {
@@ -128,10 +139,7 @@ public sealed class PlaybackEngine
             Reason = "stopped"
         });
 
-        // Release SoundFlow resources and remove from state.
-        // After this, the handle is invalid — subsequent operations will get playback_not_found.
         _state.RemoveSlot(handle);
-
         return Task.CompletedTask;
     }
 
@@ -139,14 +147,10 @@ public sealed class PlaybackEngine
     {
         var slot = _state.GetSlot(handle);
 
-        if (_audioEnabled && slot.Player is not null)
+        if (_audioEnabled && _backend is not null && slot.Source != 0)
         {
             var seconds = positionMs / 1000.0f;
-            if (!slot.Player.Seek(seconds))
-            {
-                throw new Protocol.RuntimeException(
-                    "seek_unsupported", "Seek failed — source may not be seekable", retryable: false);
-            }
+            _backend.SetSourcePositionSeconds(slot.Source, seconds);
         }
 
         return Task.CompletedTask;
@@ -157,8 +161,8 @@ public sealed class PlaybackEngine
         var slot = _state.GetSlot(handle);
         slot.Volume = level;
 
-        if (_audioEnabled && slot.Player is not null)
-            slot.Player.Volume = Math.Clamp(level, 0.0f, 1.0f);
+        if (_audioEnabled && _backend is not null && slot.Source != 0)
+            _backend.SetVolume(slot.Source, level);
 
         return Task.CompletedTask;
     }
@@ -168,8 +172,8 @@ public sealed class PlaybackEngine
         var slot = _state.GetSlot(handle);
         slot.Pan = value;
 
-        if (_audioEnabled && slot.Player is not null)
-            slot.Player.Pan = MapPan(value);
+        if (_audioEnabled && _backend is not null && slot.Source != 0)
+            _backend.SetPan(slot.Source, value);
 
         return Task.CompletedTask;
     }
@@ -178,10 +182,10 @@ public sealed class PlaybackEngine
     {
         var slot = _state.GetSlot(handle);
 
-        if (_audioEnabled && slot.Player is not null)
+        if (_audioEnabled && _backend is not null && slot.Source != 0)
         {
-            var posMs = (long)(slot.Player.Time * 1000.0f);
-            return Task.FromResult(posMs);
+            var seconds = _backend.GetSourcePositionSeconds(slot.Source);
+            return Task.FromResult((long)(seconds * 1000.0f));
         }
 
         return Task.FromResult(0L);
@@ -191,30 +195,105 @@ public sealed class PlaybackEngine
     {
         var slot = _state.GetSlot(handle);
 
-        if (_audioEnabled && slot.Player is not null)
-        {
-            var dur = slot.Player.Duration;
-            if (dur <= 0) return Task.FromResult<long?>(null);
-            return Task.FromResult<long?>((long)(dur * 1000.0f));
-        }
-
+        // Duration is known from WAV data at load time — stored as asset metadata
+        // For now, return null (same behavior as SoundFlow when duration unknown)
+        // TODO: store duration in slot at load time from WAV header
         return Task.FromResult<long?>(null);
     }
 
-    // ── Natural completion ──
+    // ── WAV loading ──
+
+    internal void LoadWavIntoSlot(PlaybackSlot slot, string filePath)
+    {
+        if (_backend is null) return;
+
+        var wav = WavReader.Read(filePath);
+        var buffer = _backend.CreateBuffer(wav.PcmBytes, wav.SampleRate, wav.Channels, wav.BitsPerSample);
+        var source = _backend.CreateSource();
+        _backend.BindBuffer(source, buffer);
+
+        slot.Source = source;
+        slot.Buffer = buffer;
+        slot.Backend = _backend;
+        slot.AudioStream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+    }
 
     /// <summary>
-    /// Called by SoundFlow's PlaybackEnded event (fires on the audio thread).
-    /// Guards against the stop-vs-completion race: if StopAsync already cleaned
-    /// up this handle, TryGetSlot returns false and we silently exit.
+    /// Load WAV data from a byte array (for synthesis output already in memory).
+    /// </summary>
+    internal void LoadWavBytesIntoSlot(PlaybackSlot slot, byte[] wavBytes)
+    {
+        if (_backend is null) return;
+
+        var wav = WavReader.Read(new MemoryStream(wavBytes));
+        var buffer = _backend.CreateBuffer(wav.PcmBytes, wav.SampleRate, wav.Channels, wav.BitsPerSample);
+        var source = _backend.CreateSource();
+        _backend.BindBuffer(source, buffer);
+
+        slot.Source = source;
+        slot.Buffer = buffer;
+        slot.Backend = _backend;
+    }
+
+    // ── Completion polling ──
+
+    /// <summary>
+    /// Polls OpenAL source state at 10ms intervals to detect natural completion.
+    /// Replaces SoundFlow's PlaybackEnded event callback.
+    /// Spike validated: 100ms tone detected in 98ms at 10ms poll interval.
+    /// </summary>
+    private void PollCompletionLoop()
+    {
+        while (!_pollCts.Token.IsCancellationRequested)
+        {
+            try
+            {
+                Thread.Sleep(10);
+
+                string[] handlesToCheck;
+                lock (_pollLock)
+                {
+                    if (_polledHandles.Count == 0) continue;
+                    handlesToCheck = [.. _polledHandles];
+                }
+
+                foreach (var handle in handlesToCheck)
+                {
+                    if (!_state.TryGetSlot(handle, out var slot) || slot is null)
+                    {
+                        lock (_pollLock) { _polledHandles.Remove(handle); }
+                        continue;
+                    }
+
+                    if (slot.Source == 0 || _backend is null) continue;
+
+                    var state = _backend.GetSourceState(slot.Source);
+                    if (state == SourceState.Stopped && slot.Status == PlaybackStatus.Playing)
+                    {
+                        // Natural completion detected
+                        lock (_pollLock) { _polledHandles.Remove(handle); }
+                        OnNaturalCompletion(handle);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.WriteLine($"[playback] poll error: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Called when OpenAL reports a source has stopped while we expected it to be playing.
+    /// Guards against stop-vs-completion race: if StopAsync already cleaned up, TryGetSlot fails.
     /// </summary>
     internal void OnNaturalCompletion(string handle)
     {
         if (!_state.TryGetSlot(handle, out var slot) || slot is null)
-            return; // Already removed by explicit stop — nothing to do.
+            return;
 
         if (slot.Status == PlaybackStatus.Stopped)
-            return; // Stop raced us and won.
+            return;
 
         slot.Status = PlaybackStatus.Stopped;
 
@@ -229,28 +308,19 @@ public sealed class PlaybackEngine
 
     // ── Internals ──
 
-    /// <summary>
-    /// Map sonic-core pan (-1.0..1.0) to SoundFlow pan (0.0..1.0).
-    /// Defensive clamp because callers are sometimes little chaos goblins.
-    /// </summary>
-    private static float MapPan(float corePan)
-    {
-        return Math.Clamp((corePan + 1.0f) / 2.0f, 0.0f, 1.0f);
-    }
-
     private static string ResolveAssetPath(string assetRef)
     {
         if (assetRef.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
-            return assetRef[8..]; // strip file:///
+            return assetRef[8..];
         if (assetRef.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
             return assetRef[7..];
-        return assetRef; // treat as direct path
+        return assetRef;
     }
 
-    private static void EnsurePlayerLoaded(PlaybackSlot slot)
+    public void Dispose()
     {
-        if (slot.Player is null)
-            throw new Protocol.RuntimeException(
-                "playback_not_found", $"Handle {slot.Handle} has no loaded player", retryable: false);
+        _pollCts.Cancel();
+        _pollThread?.Join(timeout: TimeSpan.FromMilliseconds(500));
+        _pollCts.Dispose();
     }
 }

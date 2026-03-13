@@ -128,7 +128,7 @@ public class EventEmissionTests
         var handle = await playback.LoadAssetAsync("test.wav");
         await playback.PlayAsync(handle, 1.0f, 0.0f, 0, false);
 
-        // Simulate SoundFlow's PlaybackEnded callback
+        // Simulate natural completion (detected by polling thread in production)
         playback.OnNaturalCompletion(handle);
 
         Assert.Single(recorder.Events);

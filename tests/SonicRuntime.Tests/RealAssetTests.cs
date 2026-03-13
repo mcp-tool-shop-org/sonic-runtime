@@ -137,24 +137,25 @@ public class RealAssetTests
     // ── Pan mapping tests ──
 
     [Theory]
-    [InlineData(-1.0f, 0.0f)]   // Full left
-    [InlineData(0.0f, 0.5f)]    // Center
-    [InlineData(1.0f, 1.0f)]    // Full right
-    [InlineData(-0.5f, 0.25f)]  // Quarter left
-    [InlineData(0.5f, 0.75f)]   // Quarter right
-    public void PanMapping_Converts_Correctly(float corePan, float expectedSoundFlowPan)
+    [InlineData(-1.0f, -1.0f)]  // Full left — direct mapping
+    [InlineData(0.0f, 0.0f)]    // Center — direct mapping
+    [InlineData(1.0f, 1.0f)]    // Full right — direct mapping
+    [InlineData(-0.5f, -0.5f)]  // Quarter left — direct mapping
+    [InlineData(0.5f, 0.5f)]    // Quarter right — direct mapping
+    public void PanMapping_DirectPass_OpenAL(float corePan, float expectedOpenAlPan)
     {
-        // Mirror the exact formula from PlaybackEngine
-        var result = Math.Clamp((corePan + 1.0f) / 2.0f, 0.0f, 1.0f);
-        Assert.Equal(expectedSoundFlowPan, result, 4);
+        // OpenAL with SourceRelative=true maps -1..1 on X axis directly.
+        // No conversion needed (validated in spike, ADR-0010).
+        var result = Math.Clamp(corePan, -1.0f, 1.0f);
+        Assert.Equal(expectedOpenAlPan, result, 4);
     }
 
     [Theory]
-    [InlineData(-2.0f, 0.0f)]   // Below range clamps to 0
+    [InlineData(-2.0f, -1.0f)]  // Below range clamps to -1
     [InlineData(2.0f, 1.0f)]    // Above range clamps to 1
     public void PanMapping_Clamps_Out_Of_Range(float corePan, float expected)
     {
-        var result = Math.Clamp((corePan + 1.0f) / 2.0f, 0.0f, 1.0f);
+        var result = Math.Clamp(corePan, -1.0f, 1.0f);
         Assert.Equal(expected, result, 4);
     }
 

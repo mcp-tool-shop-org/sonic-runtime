@@ -18,6 +18,9 @@
 
     <!-- Single file output -->
     <SelfContained>true</SelfContained>
+
+    <!-- Required for OpenAL Silk.NET pointer interop (Device*, Context*) -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
@@ -33,9 +36,11 @@
     <!-- JSON serialization: source-generated, NativeAOT-safe -->
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
 
-    <!-- Audio backend: SoundFlow (MiniAudio P/Invoke, NativeAOT-safe) -->
-    <!-- Selected over NAudio (COM interop broken under NativeAOT) per backend-evaluation.md -->
-    <PackageReference Include="SoundFlow" Version="1.1.1" />
+    <!-- Audio backend: OpenAL Soft via Silk.NET (per ADR-0010) -->
+    <!-- Replaces SoundFlow — unlocks per-playback device routing -->
+    <PackageReference Include="Silk.NET.OpenAL" Version="2.22.0" />
+    <PackageReference Include="Silk.NET.OpenAL.Extensions.Enumeration" Version="2.22.0" />
+    <PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
 
     <!-- ONNX Runtime: Kokoro inference (NativeAOT-validated by spike-onnx) -->
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.22.0" />

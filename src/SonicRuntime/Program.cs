@@ -1,15 +1,13 @@
 using SonicRuntime.Engine;
 using SonicRuntime.Protocol;
 using SonicRuntime.Synthesis;
-using SoundFlow.Backends.MiniAudio;
-using SoundFlow.Enums;
 
 // sonic-runtime entry point.
 // No IHost. No DI container. No app host machinery. No architectural lasagna.
 
-// Initialize SoundFlow audio engine (singleton, must be first)
-using var audioEngine = new MiniAudioEngine(48000, Capability.Playback);
-Console.Error.WriteLine("[sonic-runtime] audio engine initialized: 48000Hz stereo");
+// Initialize OpenAL Soft audio backend (replaces SoundFlow per ADR-0010)
+using var audioBackend = new OpenAlBackend();
+Console.Error.WriteLine("[sonic-runtime] OpenAL Soft audio backend initialized");
 
 // Resolve paths relative to the binary
 var baseDir = AppContext.BaseDirectory;
@@ -27,10 +25,10 @@ using var inference = new KokoroInference(modelPath);
 
 var state = new RuntimeState();
 var events = new CommandLoopEventWriter();
-var playback = new PlaybackEngine(state, events: events);
-var devices = new DeviceManager();
+using var playback = new PlaybackEngine(state, audioBackend, events: events);
+var devices = new DeviceManager(audioBackend);
 using var synthesis = new SynthesisEngine(
-    state, tokenizer, voiceRegistry, inference, events: events);
+    state, playback, tokenizer, voiceRegistry, inference, events: events);
 var dispatcher = new CommandDispatcher(
     playback, devices, synthesis,
     state, voiceRegistry, inference, tokenizer, baseDir);

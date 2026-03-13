@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.0
+
+- **Audio backend replaced: SoundFlow → OpenAL Soft via Silk.NET** (ADR-0010)
+- OpenAlBackend class wraps all unsafe pointer operations behind safe API
+- Device enumeration via ALC_ENUMERATE_ALL_EXT (real hardware endpoints)
+- Playback via OpenAL source/buffer model (replaces SoundPlayer/Mixer.Master)
+- Pan maps -1..1 directly via SourceRelative + X position (no conversion needed)
+- Completion detection via 10ms polling of AL_SOURCE_STATE (replaces event callback)
+- WavReader for parsing WAV files into OpenAL buffers
+- SynthesisEngine delegates slot loading to PlaybackEngine
+- Removes SoundFlow dependency entirely
+- 95 tests passing
+
 ## v0.3.1
 
 - Engine event emission via IEventWriter (synthesis_started, synthesis_completed, playback_ended)

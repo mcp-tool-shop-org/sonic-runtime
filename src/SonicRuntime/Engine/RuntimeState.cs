@@ -1,6 +1,3 @@
-using SoundFlow.Components;
-using SoundFlow.Providers;
-
 namespace SonicRuntime.Engine;
 
 /// <summary>
@@ -49,7 +46,7 @@ public sealed class RuntimeState
 }
 
 /// <summary>
-/// State for one active playback item, including SoundFlow objects.
+/// State for one active playback item, including OpenAL resource IDs.
 /// </summary>
 public sealed class PlaybackSlot : IDisposable
 {
@@ -60,20 +57,34 @@ public sealed class PlaybackSlot : IDisposable
     public float Pan { get; set; }
     public bool Loop { get; set; }
 
-    // SoundFlow objects — nullable because they're set after load
+    // OpenAL resource IDs (0 = not allocated)
+    public uint Source { get; set; }
+    public uint Buffer { get; set; }
+
+    // Backend reference for cleanup
+    public OpenAlBackend? Backend { get; set; }
+
+    // WAV file stream (still needed for file-based assets)
     public FileStream? AudioStream { get; set; }
-    public StreamDataProvider? DataProvider { get; set; }
-    public SoundPlayer? Player { get; set; }
 
     public PlaybackSlot(string handle) => Handle = handle;
 
     public void Dispose()
     {
-        if (Player is not null)
+        if (Backend is not null)
         {
-            try { Mixer.Master.RemoveComponent(Player); } catch { }
+            if (Source != 0)
+            {
+                try { Backend.Stop(Source); } catch { }
+                try { Backend.DeleteSource(Source); } catch { }
+                Source = 0;
+            }
+            if (Buffer != 0)
+            {
+                try { Backend.DeleteBuffer(Buffer); } catch { }
+                Buffer = 0;
+            }
         }
-        DataProvider?.Dispose();
         AudioStream?.Dispose();
     }
 }

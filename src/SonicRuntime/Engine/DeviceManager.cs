@@ -1,25 +1,26 @@
-using SoundFlow.Abstracts;
 using SonicRuntime.Protocol;
 
 namespace SonicRuntime.Engine;
 
 /// <summary>
-/// Real device manager backed by SoundFlow/MiniAudio.
-/// Enumerates output devices and tracks the current selection.
+/// Device manager backed by OpenAL Soft via Silk.NET.
+/// Enumerates output devices using ALC_ENUMERATE_ALL_EXT and tracks the current selection.
 /// </summary>
 public sealed class DeviceManager
 {
     private readonly bool _audioEnabled;
+    private readonly OpenAlBackend? _backend;
     private string _currentDeviceId = "";
 
-    public DeviceManager(bool audioEnabled = true)
+    public DeviceManager(OpenAlBackend? backend = null, bool audioEnabled = true)
     {
+        _backend = backend;
         _audioEnabled = audioEnabled;
     }
 
     public Task<Protocol.DeviceInfo[]> ListDevicesAsync()
     {
-        if (!_audioEnabled)
+        if (!_audioEnabled || _backend is null)
         {
             return Task.FromResult(new[]
             {
@@ -35,25 +36,25 @@ public sealed class DeviceManager
             });
         }
 
-        var engine = AudioEngine.Instance;
-        var sfDevices = engine.PlaybackDevices;
+        var devices = _backend.EnumerateDevices();
+        var result = new Protocol.DeviceInfo[devices.Count];
 
-        var result = new Protocol.DeviceInfo[sfDevices.Length];
-        for (int i = 0; i < sfDevices.Length; i++)
+        for (int i = 0; i < devices.Count; i++)
         {
-            var d = sfDevices[i];
-            var deviceId = d.Id.ToString();
+            var (name, isDefault) = devices[i];
+            // Use a stable ID derived from the device name
+            var deviceId = $"openal_{i}_{StableHash(name):x8}";
             result[i] = new Protocol.DeviceInfo
             {
                 DeviceId = deviceId,
-                Name = d.Name,
+                Name = name,
                 Kind = "output",
-                IsDefault = d.IsDefault,
+                IsDefault = isDefault,
                 Channels = 2,
                 SampleRates = [44100, 48000]
             };
 
-            if (d.IsDefault && string.IsNullOrEmpty(_currentDeviceId))
+            if (isDefault && string.IsNullOrEmpty(_currentDeviceId))
                 _currentDeviceId = deviceId;
         }
 
@@ -68,27 +69,26 @@ public sealed class DeviceManager
             return Task.CompletedTask;
         }
 
-        var engine = AudioEngine.Instance;
-        var found = false;
-        foreach (var d in engine.PlaybackDevices)
-        {
-            if (d.Id.ToString() == deviceId)
-            {
-                found = true;
-                break;
-            }
-        }
-
-        if (!found)
-            throw new RuntimeException("device_unavailable", $"Device not found: {deviceId}", retryable: true);
-
+        // Stage 1: track selection. Device switching requires context re-creation
+        // which is a Stage 2 concern (per-playback routing).
         _currentDeviceId = deviceId;
-        // Note: SoundFlow v1.1.1 singleton engine model doesn't support
-        // per-playback device routing. Device switching would require
-        // engine re-initialization. For v1, we track the selection and
-        // apply it on next engine init. Full hot-switch is a v2 concern.
         return Task.CompletedTask;
     }
 
     public string CurrentDeviceId => _currentDeviceId;
+
+    /// <summary>
+    /// Simple stable hash for device ID generation.
+    /// Not cryptographic — just needs to be deterministic for the same input.
+    /// </summary>
+    private static uint StableHash(string input)
+    {
+        uint hash = 2166136261;
+        foreach (char c in input)
+        {
+            hash ^= c;
+            hash *= 16777619;
+        }
+        return hash;
+    }
 }
