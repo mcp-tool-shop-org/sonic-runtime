@@ -1,13 +1,21 @@
-# sonic-runtime
+<p align="center">
+  <img src="https://raw.githubusercontent.com/mcp-tool-shop-org/brand/main/logos/sonic-runtime/readme.png" width="400" alt="sonic-runtime" />
+</p>
 
-Native audio runtime sidecar for [sonic-core](https://github.com/mcp-tool-shop-org/sonic-core).
+<p align="center">
+  <a href="https://github.com/mcp-tool-shop-org/sonic-runtime/actions/workflows/ci.yml"><img src="https://github.com/mcp-tool-shop-org/sonic-runtime/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/mcp-tool-shop-org/sonic-runtime/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" /></a>
+  <a href="https://mcp-tool-shop-org.github.io/sonic-runtime/"><img src="https://img.shields.io/badge/Landing_Page-live-blue" alt="Landing Page" /></a>
+</p>
+
+Native audio runtime sidecar for [sonic-core](https://github.com/mcp-tool-shop-org/sonic-core). C# NativeAOT binary that handles playback, device routing, and synthesis over ndjson-stdio.
 
 ## What This Is
 
 A subprocess sidecar that handles the native audio concerns sonic-core delegates:
 
 - **Playback** — load, play, pause, resume, stop, seek, fade, volume, pan, loop
-- **Device control** — enumerate outputs, switch devices, handle hot-plug
+- **Device control** — enumerate outputs, per-playback device routing, handle hot-plug
 - **Synthesis** — Kokoro/ONNX TTS inference producing playable audio
 
 sonic-core launches this as a child process and communicates over newline-delimited JSON on stdio.
@@ -25,7 +33,7 @@ See [ADR-0005](https://github.com/mcp-tool-shop-org/sonic-core/blob/main/docs/ad
 ## Stack
 
 - **C# / .NET 8 LTS** with **NativeAOT** — single native binary, no JIT, no runtime dependency
-- **SoundFlow v1.1.1** — MiniAudio-backed playback engine (won eval over NAudio; see `docs/backend-evaluation.md`)
+- **OpenAL Soft** via **Silk.NET** — low-latency audio playback and device management
 - **ONNX Runtime 1.22.0** — Kokoro TTS inference via managed C# binding (NativeAOT-compatible)
 - **eSpeak-NG 1.52.0** — grapheme-to-phoneme conversion (spawned as child process)
 - **Windows-first** (v1)
@@ -58,23 +66,20 @@ Quick example:
 
 ```
 → {"id":1,"method":"version"}
-← {"id":1,"result":{"name":"sonic-runtime","version":"0.3.1","protocol":"ndjson-stdio-v1"}}
+← {"id":1,"result":{"name":"sonic-runtime","version":"0.5.0","protocol":"ndjson-stdio-v1"}}
 
 → {"id":2,"method":"load_asset","params":{"asset_ref":"file:///rain.wav"}}
 ← {"id":2,"result":{"handle":"h_000000000001"}}
 
 → {"id":3,"method":"play","params":{"handle":"h_000000000001","volume":0.8,"loop":true}}
 ← {"id":3,"result":null}
-
-→ {"id":4,"method":"get_health"}
-← {"id":4,"result":{"status":"ok","uptime_ms":12345,"active_handles":1,"model_loaded":true,...}}
 ```
 
 ## Architecture
 
 ```
 stdin (JSON) → CommandLoop → CommandDispatcher → Engine components → stdout (JSON)
-                    │                             ├─ PlaybackEngine (SoundFlow)
+                    │                             ├─ PlaybackEngine (OpenAL Soft)
                     │                             ├─ DeviceManager (hot-plug, enumeration)
                     │                             ├─ SynthesisEngine (Kokoro ONNX → WAV → playback)
                     │                             │   ├─ KokoroTokenizer (eSpeak G2P)
@@ -92,17 +97,12 @@ Real synthesis requires model files, voice embeddings, and eSpeak-NG. See [docs/
 
 ## Status
 
-**v0.3.1** — Working native synthesis/playback sidecar with runtime introspection and event emission.
-
-What's implemented:
-- Real SoundFlow playback (load, play, pause, resume, stop, seek, fade, volume, pan, loop)
-- Device enumeration and hot-plug handling
-- Kokoro ONNX synthesis (text → phonemes → inference → WAV → playback, ~5× realtime on CPU)
-- Runtime introspection (get_health, get_capabilities, list_voices, preload_model, get_model_status)
-- Event emission via IEventWriter (synthesis_started, synthesis_completed, playback_ended)
-- Full integration with sonic-core SidecarBackend over ndjson-stdio-v1
-- 84 tests (unit + real-asset integration)
+**v0.5.0** — Per-playback device routing, OpenAL Soft backend, 95 tests.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+---
+
+Built by [MCP Tool Shop](https://mcp-tool-shop.github.io/)

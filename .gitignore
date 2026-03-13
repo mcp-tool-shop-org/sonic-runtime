@@ -26,3 +26,9 @@ assets-test/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+## Site
+site/.astro/
+site/dist/
+site/node_modules/
+.polyglot-cache.json
