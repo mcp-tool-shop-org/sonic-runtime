@@ -136,12 +136,12 @@ public class IntrospectionTests
     // ── version ──
 
     [Fact]
-    public async Task Version_Returns_040()
+    public async Task Version_Returns_041()
     {
         var (stdout, _) = await RunCommandAsync("""{"id":1,"method":"version"}""");
         var response = JsonSerializer.Deserialize<JsonElement>(stdout);
         var result = response.GetProperty("result");
-        Assert.Equal("0.4.0", result.GetProperty("version").GetString());
+        Assert.Equal("0.4.1", result.GetProperty("version").GetString());
         Assert.Equal("ndjson-stdio-v1", result.GetProperty("protocol").GetString());
     }
 

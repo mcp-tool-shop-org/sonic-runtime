@@ -116,6 +116,102 @@ public class EventEmissionTests
         Assert.Empty(recorder.Events);
     }
 
+    // ── Natural completion events ──
+
+    [Fact]
+    public async Task Natural_Completion_Emits_Playback_Ended_With_Reason_Completed()
+    {
+        var recorder = new RecordingEventWriter();
+        var state = new RuntimeState();
+        var playback = new PlaybackEngine(state, audioEnabled: false, events: recorder);
+
+        var handle = await playback.LoadAssetAsync("test.wav");
+        await playback.PlayAsync(handle, 1.0f, 0.0f, 0, false);
+
+        // Simulate SoundFlow's PlaybackEnded callback
+        playback.OnNaturalCompletion(handle);
+
+        Assert.Single(recorder.Events);
+        Assert.Equal("playback_ended", recorder.Events[0].Type);
+        var data = (PlaybackEndedData)recorder.Events[0].Data!;
+        Assert.Equal(handle, data.Handle);
+        Assert.Equal("completed", data.Reason);
+    }
+
+    [Fact]
+    public async Task Natural_Completion_Removes_Slot()
+    {
+        var recorder = new RecordingEventWriter();
+        var state = new RuntimeState();
+        var playback = new PlaybackEngine(state, audioEnabled: false, events: recorder);
+
+        var handle = await playback.LoadAssetAsync("test.wav");
+        await playback.PlayAsync(handle, 1.0f, 0.0f, 0, false);
+        Assert.Equal(1, state.ActiveHandleCount);
+
+        playback.OnNaturalCompletion(handle);
+
+        Assert.Equal(0, state.ActiveHandleCount);
+    }
+
+    [Fact]
+    public async Task Stop_Then_Natural_Completion_Does_Not_Double_Emit()
+    {
+        var recorder = new RecordingEventWriter();
+        var state = new RuntimeState();
+        var playback = new PlaybackEngine(state, audioEnabled: false, events: recorder);
+
+        var handle = await playback.LoadAssetAsync("test.wav");
+        await playback.PlayAsync(handle, 1.0f, 0.0f, 0, false);
+
+        // Explicit stop fires first
+        await playback.StopAsync(handle, 0);
+        Assert.Single(recorder.Events);
+        Assert.Equal("stopped", ((PlaybackEndedData)recorder.Events[0].Data!).Reason);
+
+        // Natural completion races in after stop — should be a no-op
+        playback.OnNaturalCompletion(handle);
+        Assert.Single(recorder.Events); // Still just the one event
+    }
+
+    [Fact]
+    public async Task Natural_Completion_Then_Stop_Throws_Not_Found()
+    {
+        var recorder = new RecordingEventWriter();
+        var state = new RuntimeState();
+        var playback = new PlaybackEngine(state, audioEnabled: false, events: recorder);
+
+        var handle = await playback.LoadAssetAsync("test.wav");
+        await playback.PlayAsync(handle, 1.0f, 0.0f, 0, false);
+
+        // Natural completion fires first
+        playback.OnNaturalCompletion(handle);
+        Assert.Single(recorder.Events);
+
+        // Stop after natural completion — handle is gone
+        var ex = await Assert.ThrowsAsync<RuntimeException>(() => playback.StopAsync(handle, 0));
+        Assert.Equal("playback_not_found", ex.Code);
+    }
+
+    [Fact]
+    public async Task Multiple_Short_Playbacks_Do_Not_Accumulate_After_Completion()
+    {
+        var recorder = new RecordingEventWriter();
+        var state = new RuntimeState();
+        var playback = new PlaybackEngine(state, audioEnabled: false, events: recorder);
+
+        for (int i = 0; i < 5; i++)
+        {
+            var handle = await playback.LoadAssetAsync("test.wav");
+            await playback.PlayAsync(handle, 1.0f, 0.0f, 0, false);
+            playback.OnNaturalCompletion(handle);
+        }
+
+        Assert.Equal(0, state.ActiveHandleCount);
+        Assert.Equal(5, recorder.Events.Count);
+        Assert.All(recorder.Events, e => Assert.Equal("completed", ((PlaybackEndedData)e.Data!).Reason));
+    }
+
     // ── NullEventWriter ──
 
     [Fact]
@@ -238,6 +334,47 @@ public class EventEmissionTests
         // Fourth line should be the stop response
         var stopResponse = JsonSerializer.Deserialize<JsonElement>(lines[3]);
         Assert.Equal(3, stopResponse.GetProperty("id").GetInt32());
+    }
+
+    // ── E2E: natural completion event on stdout ──
+
+    [Fact]
+    public async Task Natural_Completion_Event_Interleaves_On_Stdout()
+    {
+        // Load → play → simulate natural completion → verify event on stdout
+        var commands =
+            """{"id":1,"method":"load_asset","params":{"asset_ref":"test.wav"}}""" + "\n" +
+            """{"id":2,"method":"play","params":{"handle":"h_000000000001","volume":1.0}}""";
+
+        var stdin = new StringReader(commands + "\n");
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var state = new RuntimeState();
+        var eventWriter = new CommandLoopEventWriter();
+        var playback = new PlaybackEngine(state, audioEnabled: false, events: eventWriter);
+        var devices = new DeviceManager(audioEnabled: false);
+        var synthesis = new SynthesisEngine(state, audioEnabled: false);
+        var dispatcher = new CommandDispatcher(playback, devices, synthesis, state);
+        var loop = new CommandLoop(dispatcher, stdin, stdout, stderr);
+        eventWriter.Connect(loop);
+
+        await loop.RunAsync();
+
+        // Simulate natural completion after command loop finishes
+        playback.OnNaturalCompletion("h_000000000001");
+
+        var lines = stdout.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        // load response, play response, then natural completion event
+        Assert.Equal(3, lines.Length);
+
+        var eventLine = JsonSerializer.Deserialize<JsonElement>(lines[2]);
+        Assert.Equal("playback_ended", eventLine.GetProperty("event").GetString());
+        Assert.False(eventLine.TryGetProperty("id", out _));
+        var data = eventLine.GetProperty("data");
+        Assert.Equal("h_000000000001", data.GetProperty("handle").GetString());
+        Assert.Equal("completed", data.GetProperty("reason").GetString());
     }
 
     // ── stderr isolation ──

@@ -26,6 +26,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="SonicRuntime.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- JSON serialization: source-generated, NativeAOT-safe -->
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
 

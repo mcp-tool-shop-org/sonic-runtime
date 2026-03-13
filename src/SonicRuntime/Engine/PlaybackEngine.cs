@@ -69,6 +69,14 @@ public sealed class PlaybackEngine
             slot.Player.Volume = Math.Clamp(volume, 0.0f, 1.0f);
             slot.Player.Pan = MapPan(pan);
             slot.Player.IsLooping = loop;
+
+            // Natural completion: SoundFlow fires PlaybackEnded when audio reaches end.
+            // Skip for looping — looping playback never "completes".
+            if (!loop)
+            {
+                slot.Player.PlaybackEnded += (_, _) => OnNaturalCompletion(handle);
+            }
+
             Mixer.Master.AddComponent(slot.Player);
             slot.Player.Play();
         }
@@ -186,6 +194,32 @@ public sealed class PlaybackEngine
         }
 
         return Task.FromResult<long?>(null);
+    }
+
+    // ── Natural completion ──
+
+    /// <summary>
+    /// Called by SoundFlow's PlaybackEnded event (fires on the audio thread).
+    /// Guards against the stop-vs-completion race: if StopAsync already cleaned
+    /// up this handle, TryGetSlot returns false and we silently exit.
+    /// </summary>
+    internal void OnNaturalCompletion(string handle)
+    {
+        if (!_state.TryGetSlot(handle, out var slot) || slot is null)
+            return; // Already removed by explicit stop — nothing to do.
+
+        if (slot.Status == PlaybackStatus.Stopped)
+            return; // Stop raced us and won.
+
+        slot.Status = PlaybackStatus.Stopped;
+
+        _events.Write("playback_ended", new PlaybackEndedData
+        {
+            Handle = handle,
+            Reason = "completed"
+        });
+
+        _state.RemoveSlot(handle);
     }
 
     // ── Internals ──

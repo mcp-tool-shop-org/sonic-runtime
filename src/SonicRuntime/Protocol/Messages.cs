@@ -146,7 +146,7 @@ public sealed class VersionResult
     public string Name { get; set; } = "sonic-runtime";
 
     [JsonPropertyName("version")]
-    public string Version { get; set; } = "0.4.0";
+    public string Version { get; set; } = "0.4.1";
 
     [JsonPropertyName("protocol")]
     public string Protocol { get; set; } = "ndjson-stdio-v1";
