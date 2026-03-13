@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.5.0
+
+- **Per-playback device routing** — `play` accepts optional `output_device_id`
+- OpenAlBackend manages multiple device/context pairs (lazy-opened per endpoint)
+- Buffer+source re-created on target device when routing differs from default
+- PlaybackSlot retains WavData for cross-device buffer re-creation
+- DeviceManager provides reverse lookup (device_id → OpenAL device name)
+- `get_capabilities` now reports `device_routing` feature
+- Structured `device_unavailable` error for unknown device IDs
+- Duration now computed from WAV metadata (was returning null)
+- 95 tests passing
+
 ## v0.4.0
 
 - **Audio backend replaced: SoundFlow → OpenAL Soft via Silk.NET** (ADR-0010)

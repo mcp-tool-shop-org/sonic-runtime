@@ -6,20 +6,26 @@ namespace SonicRuntime.Engine;
 /// OpenAL Soft backend via Silk.NET.
 /// Wraps all unsafe pointer operations behind safe method calls.
 ///
-/// Stage 1: single device, single context. All sources play on the default device.
-/// Stage 2 (future): per-playback device routing via multiple contexts.
+/// Multi-device model: one device/context pair per output endpoint, lazily opened.
+/// Sources and buffers created on a context play to that device.
+/// The default (null device name) uses the system default output.
 /// </summary>
 public sealed unsafe class OpenAlBackend : IDisposable
 {
     private readonly AL _al;
     private readonly ALContext _alc;
-    private Device* _device;
-    private Context* _context;
     private bool _disposed;
 
-    // ALC_ENUMERATE_ALL_EXT constant — Silk.NET's Enumeration extension only wraps
-    // ALC_ENUMERATION_EXT which returns "OpenAL Soft" as a single logical device.
-    // We need the real hardware endpoint names.
+    // Default device/context (opened at construction)
+    private Device* _defaultDevice;
+    private Context* _defaultContext;
+    private readonly string? _defaultDeviceName;
+
+    // Per-device context cache: device name → (Device*, Context*)
+    // Lazily opened on first use. The default device is NOT in this map.
+    private readonly Dictionary<string, (nint Device, nint Context)> _deviceContexts = new();
+
+    // ALC_ENUMERATE_ALL_EXT constants
     private const int ALC_ALL_DEVICES_SPECIFIER = 0x1013;
     private const int ALC_DEFAULT_ALL_DEVICES_SPECIFIER = 0x1012;
 
@@ -28,24 +34,25 @@ public sealed unsafe class OpenAlBackend : IDisposable
         _alc = ALContext.GetApi();
         _al = AL.GetApi();
 
-        _device = _alc.OpenDevice(deviceName);
-        if (_device == null)
+        _defaultDevice = _alc.OpenDevice(deviceName);
+        if (_defaultDevice == null)
             throw new Protocol.RuntimeException(
                 "device_unavailable",
                 $"Failed to open audio device: {deviceName ?? "(default)"}",
                 retryable: true);
 
-        _context = _alc.CreateContext(_device, null);
-        if (_context == null)
+        _defaultContext = _alc.CreateContext(_defaultDevice, null);
+        if (_defaultContext == null)
         {
-            _alc.CloseDevice(_device);
+            _alc.CloseDevice(_defaultDevice);
             throw new Protocol.RuntimeException(
                 "device_unavailable",
                 "Failed to create OpenAL context",
                 retryable: true);
         }
 
-        _alc.MakeContextCurrent(_context);
+        _defaultDeviceName = deviceName;
+        _alc.MakeContextCurrent(_defaultContext);
     }
 
     // ── Device enumeration ──
@@ -59,7 +66,6 @@ public sealed unsafe class OpenAlBackend : IDisposable
         var result = new List<(string, bool)>();
         string defaultName = "";
 
-        // Get default device name
         var alcGetStringPtr = GetAlcGetStringPtr();
         if (alcGetStringPtr != null)
         {
@@ -67,7 +73,6 @@ public sealed unsafe class OpenAlBackend : IDisposable
             if (defaultPtr != null)
                 defaultName = System.Runtime.InteropServices.Marshal.PtrToStringAnsi((nint)defaultPtr) ?? "";
 
-            // Get all device names (double-null terminated list)
             var rawPtr = alcGetStringPtr(null, ALC_ALL_DEVICES_SPECIFIER);
             if (rawPtr != null)
             {
@@ -83,15 +88,63 @@ public sealed unsafe class OpenAlBackend : IDisposable
         return result;
     }
 
+    // ── Multi-device context management ──
+
+    /// <summary>
+    /// Get or create a device/context pair for the given device name.
+    /// null or empty returns the default device context.
+    /// Thread-safety: callers must not overlap device creation for the same name
+    /// (the command loop is single-threaded, so this is safe).
+    /// </summary>
+    private Context* GetOrCreateContext(string? deviceName)
+    {
+        if (string.IsNullOrEmpty(deviceName))
+            return _defaultContext;
+
+        if (_deviceContexts.TryGetValue(deviceName, out var cached))
+            return (Context*)cached.Context;
+
+        // Open a new device + context for this endpoint
+        var device = _alc.OpenDevice(deviceName);
+        if (device == null)
+            throw new Protocol.RuntimeException(
+                "device_unavailable",
+                $"Failed to open audio device: {deviceName}",
+                retryable: true);
+
+        var context = _alc.CreateContext(device, null);
+        if (context == null)
+        {
+            _alc.CloseDevice(device);
+            throw new Protocol.RuntimeException(
+                "device_unavailable",
+                $"Failed to create OpenAL context for device: {deviceName}",
+                retryable: true);
+        }
+
+        _deviceContexts[deviceName] = ((nint)device, (nint)context);
+        return context;
+    }
+
+    /// <summary>
+    /// Make the context for a device name current. All subsequent AL calls
+    /// will operate on this context until another MakeCurrent call.
+    /// </summary>
+    private void MakeDeviceCurrent(string? deviceName)
+    {
+        var ctx = GetOrCreateContext(deviceName);
+        _alc.MakeContextCurrent(ctx);
+    }
+
     // ── Buffer management ──
 
     /// <summary>
-    /// Create an OpenAL buffer from raw PCM data.
+    /// Create an OpenAL buffer from raw PCM data on a specific device.
     /// </summary>
-    public uint CreateBuffer(byte[] pcmData, int sampleRate, int channels, int bitsPerSample)
+    public uint CreateBuffer(byte[] pcmData, int sampleRate, int channels, int bitsPerSample, string? deviceName = null)
     {
         EnsureNotDisposed();
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
 
         var format = GetBufferFormat(channels, bitsPerSample);
         var buffer = _al.GenBuffer();
@@ -106,19 +159,19 @@ public sealed unsafe class OpenAlBackend : IDisposable
         return buffer;
     }
 
-    public void DeleteBuffer(uint buffer)
+    public void DeleteBuffer(uint buffer, string? deviceName = null)
     {
         if (_disposed) return;
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
         _al.DeleteBuffer(buffer);
     }
 
     // ── Source management ──
 
-    public uint CreateSource()
+    public uint CreateSource(string? deviceName = null)
     {
         EnsureNotDisposed();
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
 
         var source = _al.GenSource();
         CheckError("GenSource");
@@ -130,47 +183,47 @@ public sealed unsafe class OpenAlBackend : IDisposable
         return source;
     }
 
-    public void DeleteSource(uint source)
+    public void DeleteSource(uint source, string? deviceName = null)
     {
         if (_disposed) return;
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
         _al.DeleteSource(source);
     }
 
-    public void BindBuffer(uint source, uint buffer)
+    public void BindBuffer(uint source, uint buffer, string? deviceName = null)
     {
         EnsureNotDisposed();
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
         _al.SetSourceProperty(source, SourceInteger.Buffer, (int)buffer);
         CheckError("BindBuffer");
     }
 
-    public void Play(uint source)
+    public void Play(uint source, string? deviceName = null)
     {
         EnsureNotDisposed();
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
         _al.SourcePlay(source);
         CheckError("SourcePlay");
     }
 
-    public void Pause(uint source)
+    public void Pause(uint source, string? deviceName = null)
     {
         EnsureNotDisposed();
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
         _al.SourcePause(source);
     }
 
-    public void Stop(uint source)
+    public void Stop(uint source, string? deviceName = null)
     {
         EnsureNotDisposed();
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
         _al.SourceStop(source);
     }
 
-    public void SetVolume(uint source, float gain)
+    public void SetVolume(uint source, float gain, string? deviceName = null)
     {
         EnsureNotDisposed();
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
         _al.SetSourceProperty(source, SourceFloat.Gain, Math.Clamp(gain, 0.0f, 1.0f));
     }
 
@@ -178,28 +231,28 @@ public sealed unsafe class OpenAlBackend : IDisposable
     /// Set pan position. -1.0 = full left, 0.0 = center, 1.0 = full right.
     /// Maps directly to X position with SourceRelative=true (validated in spike).
     /// </summary>
-    public void SetPan(uint source, float pan)
+    public void SetPan(uint source, float pan, string? deviceName = null)
     {
         EnsureNotDisposed();
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
         _al.SetSourceProperty(source, SourceVector3.Position,
             Math.Clamp(pan, -1.0f, 1.0f), 0f, 0f);
     }
 
-    public void SetLooping(uint source, bool loop)
+    public void SetLooping(uint source, bool loop, string? deviceName = null)
     {
         EnsureNotDisposed();
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
         _al.SetSourceProperty(source, SourceBoolean.Looping, loop);
     }
 
     /// <summary>
     /// Get the current playback state of a source.
     /// </summary>
-    public SourceState GetSourceState(uint source)
+    public SourceState GetSourceState(uint source, string? deviceName = null)
     {
         if (_disposed) return SourceState.Stopped;
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
         _al.GetSourceProperty(source, GetSourceInteger.SourceState, out int stateVal);
         return (SourceState)stateVal;
     }
@@ -207,10 +260,10 @@ public sealed unsafe class OpenAlBackend : IDisposable
     /// <summary>
     /// Get the current playback position in seconds.
     /// </summary>
-    public float GetSourcePositionSeconds(uint source)
+    public float GetSourcePositionSeconds(uint source, string? deviceName = null)
     {
         if (_disposed) return 0f;
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
         _al.GetSourceProperty(source, SourceFloat.SecOffset, out float seconds);
         return seconds;
     }
@@ -218,10 +271,10 @@ public sealed unsafe class OpenAlBackend : IDisposable
     /// <summary>
     /// Seek to a position in seconds.
     /// </summary>
-    public void SetSourcePositionSeconds(uint source, float seconds)
+    public void SetSourcePositionSeconds(uint source, float seconds, string? deviceName = null)
     {
         EnsureNotDisposed();
-        _alc.MakeContextCurrent(_context);
+        MakeDeviceCurrent(deviceName);
         _al.SetSourceProperty(source, SourceFloat.SecOffset, seconds);
         var err = _al.GetError();
         if (err != AudioError.NoError)
@@ -272,17 +325,28 @@ public sealed unsafe class OpenAlBackend : IDisposable
         if (_disposed) return;
         _disposed = true;
 
-        if (_context != null)
+        // Clean up per-device contexts
+        foreach (var (name, pair) in _deviceContexts)
+        {
+            var ctx = (Context*)pair.Context;
+            var dev = (Device*)pair.Device;
+            _alc.DestroyContext(ctx);
+            _alc.CloseDevice(dev);
+        }
+        _deviceContexts.Clear();
+
+        // Clean up default context
+        if (_defaultContext != null)
         {
             _alc.MakeContextCurrent(null);
-            _alc.DestroyContext(_context);
-            _context = null;
+            _alc.DestroyContext(_defaultContext);
+            _defaultContext = null;
         }
 
-        if (_device != null)
+        if (_defaultDevice != null)
         {
-            _alc.CloseDevice(_device);
-            _device = null;
+            _alc.CloseDevice(_defaultDevice);
+            _defaultDevice = null;
         }
 
         _al.Dispose();

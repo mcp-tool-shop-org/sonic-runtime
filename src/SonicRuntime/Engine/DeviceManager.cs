@@ -4,13 +4,17 @@ namespace SonicRuntime.Engine;
 
 /// <summary>
 /// Device manager backed by OpenAL Soft via Silk.NET.
-/// Enumerates output devices using ALC_ENUMERATE_ALL_EXT and tracks the current selection.
+/// Enumerates output devices using ALC_ENUMERATE_ALL_EXT.
+/// Provides reverse lookup from opaque device_id to OpenAL device name.
 /// </summary>
 public sealed class DeviceManager
 {
     private readonly bool _audioEnabled;
     private readonly OpenAlBackend? _backend;
     private string _currentDeviceId = "";
+
+    // Reverse map: opaque device_id → OpenAL device name (for per-playback routing)
+    private readonly Dictionary<string, string> _deviceIdToName = new();
 
     public DeviceManager(OpenAlBackend? backend = null, bool audioEnabled = true)
     {
@@ -42,7 +46,6 @@ public sealed class DeviceManager
         for (int i = 0; i < devices.Count; i++)
         {
             var (name, isDefault) = devices[i];
-            // Use a stable ID derived from the device name
             var deviceId = $"openal_{i}_{StableHash(name):x8}";
             result[i] = new Protocol.DeviceInfo
             {
@@ -54,6 +57,9 @@ public sealed class DeviceManager
                 SampleRates = [44100, 48000]
             };
 
+            // Build reverse lookup
+            _deviceIdToName[deviceId] = name;
+
             if (isDefault && string.IsNullOrEmpty(_currentDeviceId))
                 _currentDeviceId = deviceId;
         }
@@ -63,24 +69,36 @@ public sealed class DeviceManager
 
     public Task SetDeviceAsync(string deviceId)
     {
-        if (!_audioEnabled)
-        {
-            _currentDeviceId = deviceId;
-            return Task.CompletedTask;
-        }
-
-        // Stage 1: track selection. Device switching requires context re-creation
-        // which is a Stage 2 concern (per-playback routing).
         _currentDeviceId = deviceId;
         return Task.CompletedTask;
     }
 
-    public string CurrentDeviceId => _currentDeviceId;
+    /// <summary>
+    /// Resolve an opaque device_id to the OpenAL device name string.
+    /// Returns null if the ID is unknown (not yet enumerated or invalid).
+    /// </summary>
+    public string? ResolveDeviceName(string? deviceId)
+    {
+        if (string.IsNullOrEmpty(deviceId))
+            return null; // null/empty = default device
+
+        if (_deviceIdToName.TryGetValue(deviceId, out var name))
+            return name;
+
+        return null; // Unknown device — caller should throw device_unavailable
+    }
 
     /// <summary>
-    /// Simple stable hash for device ID generation.
-    /// Not cryptographic — just needs to be deterministic for the same input.
+    /// Check if a device_id is known (has been enumerated).
     /// </summary>
+    public bool IsKnownDevice(string? deviceId)
+    {
+        if (string.IsNullOrEmpty(deviceId)) return true; // default is always known
+        return _deviceIdToName.ContainsKey(deviceId);
+    }
+
+    public string CurrentDeviceId => _currentDeviceId;
+
     private static uint StableHash(string input)
     {
         uint hash = 2166136261;

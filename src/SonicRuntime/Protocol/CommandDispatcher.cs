@@ -86,7 +86,20 @@ public sealed class CommandDispatcher
         var pan = GetOptionalFloat(p, "pan") ?? 0.0f;
         var fadeInMs = GetOptionalInt(p, "fade_in_ms") ?? 0;
         var loop = GetOptionalBool(p, "loop") ?? false;
-        await _playback.PlayAsync(handle, volume, pan, fadeInMs, loop);
+        var outputDeviceId = GetOptionalString(p, "output_device_id");
+
+        // Resolve opaque device_id to OpenAL device name for per-playback routing
+        string? deviceName = null;
+        if (outputDeviceId is not null)
+        {
+            if (!_devices.IsKnownDevice(outputDeviceId))
+                throw new RuntimeException("device_unavailable",
+                    $"Unknown output device: {outputDeviceId}. Call list_devices first.",
+                    retryable: true);
+            deviceName = _devices.ResolveDeviceName(outputDeviceId);
+        }
+
+        await _playback.PlayAsync(handle, volume, pan, fadeInMs, loop, deviceName);
         return null;
     }
 
@@ -203,7 +216,7 @@ public sealed class CommandDispatcher
         return new CapabilitiesResult
         {
             Engines = ["kokoro"],
-            Features = ["playback", "synthesis", "device_management", "introspection", "asset_validation"],
+            Features = ["playback", "synthesis", "device_management", "device_routing", "introspection", "asset_validation"],
             Protocol = "ndjson-stdio-v1",
             SynthesisFormat = new AudioFormatInfo
             {
@@ -431,6 +444,15 @@ public sealed class CommandDispatcher
             return null;
         if (prop.ValueKind == JsonValueKind.Number)
             return prop.GetInt32();
+        return null;
+    }
+
+    private static string? GetOptionalString(JsonElement? p, string name)
+    {
+        if (p is null || !p.Value.TryGetProperty(name, out var prop))
+            return null;
+        if (prop.ValueKind == JsonValueKind.String)
+            return prop.GetString();
         return null;
     }
 

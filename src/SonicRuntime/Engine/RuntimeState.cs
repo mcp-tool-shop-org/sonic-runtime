@@ -61,6 +61,15 @@ public sealed class PlaybackSlot : IDisposable
     public uint Source { get; set; }
     public uint Buffer { get; set; }
 
+    // Which device this slot's buffer/source live on (null = default).
+    // Used to detect when a play() call targets a different device and
+    // the buffer/source need to be re-created on the new device's context.
+    public string? DeviceName { get; set; }
+
+    // Parsed WAV data — retained so buffer can be re-created on a different device.
+    // Null for audio-disabled slots.
+    public Synthesis.WavReader.WavData? WavData { get; set; }
+
     // Backend reference for cleanup
     public OpenAlBackend? Backend { get; set; }
 
@@ -69,22 +78,28 @@ public sealed class PlaybackSlot : IDisposable
 
     public PlaybackSlot(string handle) => Handle = handle;
 
+    /// <summary>
+    /// Release OpenAL resources (source + buffer) on the current device context.
+    /// </summary>
+    public void ReleaseAlResources()
+    {
+        if (Backend is null) return;
+        if (Source != 0)
+        {
+            try { Backend.Stop(Source, DeviceName); } catch { }
+            try { Backend.DeleteSource(Source, DeviceName); } catch { }
+            Source = 0;
+        }
+        if (Buffer != 0)
+        {
+            try { Backend.DeleteBuffer(Buffer, DeviceName); } catch { }
+            Buffer = 0;
+        }
+    }
+
     public void Dispose()
     {
-        if (Backend is not null)
-        {
-            if (Source != 0)
-            {
-                try { Backend.Stop(Source); } catch { }
-                try { Backend.DeleteSource(Source); } catch { }
-                Source = 0;
-            }
-            if (Buffer != 0)
-            {
-                try { Backend.DeleteBuffer(Buffer); } catch { }
-                Buffer = 0;
-            }
-        }
+        ReleaseAlResources();
         AudioStream?.Dispose();
     }
 }
