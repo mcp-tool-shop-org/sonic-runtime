@@ -136,12 +136,12 @@ public class IntrospectionTests
     // ── version ──
 
     [Fact]
-    public async Task Version_Returns_030()
+    public async Task Version_Returns_040()
     {
         var (stdout, _) = await RunCommandAsync("""{"id":1,"method":"version"}""");
         var response = JsonSerializer.Deserialize<JsonElement>(stdout);
         var result = response.GetProperty("result");
-        Assert.Equal("0.3.0", result.GetProperty("version").GetString());
+        Assert.Equal("0.4.0", result.GetProperty("version").GetString());
         Assert.Equal("ndjson-stdio-v1", result.GetProperty("protocol").GetString());
     }
 
@@ -176,6 +176,85 @@ public class IntrospectionTests
         var data = parsed.GetProperty("data");
         Assert.Equal("h_000000000001", data.GetProperty("handle").GetString());
         Assert.Equal("completed", data.GetProperty("reason").GetString());
+    }
+
+    // ── validate_assets ──
+
+    [Fact]
+    public async Task ValidateAssets_Returns_Errors_When_No_Assets()
+    {
+        // Default test setup: no real asset dirs → model/voices/espeak missing
+        var (stdout, _) = await RunCommandAsync("""{"id":1,"method":"validate_assets"}""");
+        var response = JsonSerializer.Deserialize<JsonElement>(stdout);
+        var result = response.GetProperty("result");
+
+        Assert.False(result.GetProperty("valid").GetBoolean());
+
+        var errors = result.GetProperty("errors");
+        Assert.True(errors.GetArrayLength() > 0);
+
+        // Model check should report missing
+        var model = result.GetProperty("model");
+        Assert.False(model.GetProperty("available").GetBoolean());
+        Assert.NotNull(model.GetProperty("error").GetString());
+        Assert.NotNull(model.GetProperty("hint").GetString());
+
+        // Voices check should report missing
+        var voices = result.GetProperty("voices");
+        Assert.Equal(0, voices.GetProperty("count").GetInt32());
+
+        // ONNX runtime should be available (it's linked)
+        var onnx = result.GetProperty("onnx_runtime");
+        Assert.True(onnx.GetProperty("available").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ValidateAssets_With_Model_And_Voices()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "sonic-test-validate-" + Guid.NewGuid().ToString("N")[..8]);
+        var modelsDir = Path.Combine(tempDir, "models");
+        var voicesDir = Path.Combine(tempDir, "voices");
+        Directory.CreateDirectory(modelsDir);
+        Directory.CreateDirectory(voicesDir);
+
+        try
+        {
+            // Create fake model file
+            File.WriteAllBytes(Path.Combine(modelsDir, "kokoro.onnx"), new byte[100]);
+
+            // Create synthetic voice
+            var voiceData = new float[10 * VoiceRegistry.StyleDim];
+            var bytes = new byte[voiceData.Length * sizeof(float)];
+            Buffer.BlockCopy(voiceData, 0, bytes, 0, bytes.Length);
+            File.WriteAllBytes(Path.Combine(voicesDir, "af_heart.bin"), bytes);
+
+            var voiceRegistry = new VoiceRegistry(voicesDir, TextWriter.Null);
+            voiceRegistry.LoadAll();
+
+            var (stdout, _) = await RunCommandWithBaseDirAsync(
+                """{"id":1,"method":"validate_assets"}""", voiceRegistry, tempDir);
+            var response = JsonSerializer.Deserialize<JsonElement>(stdout);
+            var result = response.GetProperty("result");
+
+            // Model and voices should be available
+            Assert.True(result.GetProperty("model").GetProperty("available").GetBoolean());
+            Assert.True(result.GetProperty("voices").GetProperty("available").GetBoolean());
+            Assert.Equal(1, result.GetProperty("voices").GetProperty("count").GetInt32());
+            Assert.Equal(tempDir, result.GetProperty("asset_root").GetString());
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task ValidateAssets_Reports_Asset_Root()
+    {
+        var (stdout, _) = await RunCommandAsync("""{"id":1,"method":"validate_assets"}""");
+        var response = JsonSerializer.Deserialize<JsonElement>(stdout);
+        var result = response.GetProperty("result");
+        Assert.NotNull(result.GetProperty("asset_root").GetString());
     }
 
     // ── Voice ID parsing ──
@@ -228,6 +307,26 @@ public class IntrospectionTests
         var devices = new DeviceManager(audioEnabled: false);
         var synthesis = new SynthesisEngine(state, audioEnabled: false);
         var dispatcher = new CommandDispatcher(playback, devices, synthesis, state);
+        var loop = new CommandLoop(dispatcher, stdin, stdout, stderr);
+
+        await loop.RunAsync();
+
+        return (stdout.ToString().Trim(), stderr.ToString().Trim());
+    }
+
+    private static async Task<(string stdout, string stderr)> RunCommandWithBaseDirAsync(
+        string requestLine, VoiceRegistry voiceRegistry, string baseDir)
+    {
+        var stdin = new StringReader(requestLine + "\n");
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var state = new RuntimeState();
+        var playback = new PlaybackEngine(state, audioEnabled: false);
+        var devices = new DeviceManager(audioEnabled: false);
+        var synthesis = new SynthesisEngine(state, audioEnabled: false);
+        var dispatcher = new CommandDispatcher(
+            playback, devices, synthesis, state, voiceRegistry, baseDir: baseDir);
         var loop = new CommandLoop(dispatcher, stdin, stdout, stderr);
 
         await loop.RunAsync();

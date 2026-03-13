@@ -77,6 +77,9 @@ public sealed class RuntimeError
 [JsonSerializable(typeof(VoiceInfo[]))]
 [JsonSerializable(typeof(ModelStatusResult))]
 [JsonSerializable(typeof(PreloadResult))]
+[JsonSerializable(typeof(AssetCheckResult))]
+[JsonSerializable(typeof(VoiceAssetResult))]
+[JsonSerializable(typeof(ValidateAssetsResult))]
 [JsonSerializable(typeof(RuntimeEvent))]
 [JsonSerializable(typeof(PlaybackEndedData))]
 [JsonSerializable(typeof(SynthesisStartedData))]
@@ -143,7 +146,7 @@ public sealed class VersionResult
     public string Name { get; set; } = "sonic-runtime";
 
     [JsonPropertyName("version")]
-    public string Version { get; set; } = "0.3.0";
+    public string Version { get; set; } = "0.4.0";
 
     [JsonPropertyName("protocol")]
     public string Protocol { get; set; } = "ndjson-stdio-v1";
@@ -218,6 +221,71 @@ public sealed class PreloadResult
 
     [JsonPropertyName("load_time_ms")]
     public long LoadTimeMs { get; set; }
+}
+
+// ── Asset validation result types (v0.4.0) ──
+
+public sealed class AssetCheckResult
+{
+    [JsonPropertyName("available")]
+    public bool Available { get; set; }
+
+    [JsonPropertyName("path")]
+    public string? Path { get; set; }
+
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
+
+    [JsonPropertyName("hint")]
+    public string? Hint { get; set; }
+}
+
+public sealed class VoiceAssetResult
+{
+    [JsonPropertyName("available")]
+    public bool Available { get; set; }
+
+    [JsonPropertyName("path")]
+    public string? Path { get; set; }
+
+    [JsonPropertyName("count")]
+    public int Count { get; set; }
+
+    [JsonPropertyName("voices")]
+    public string[]? Voices { get; set; }
+
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
+
+    [JsonPropertyName("hint")]
+    public string? Hint { get; set; }
+}
+
+public sealed class ValidateAssetsResult
+{
+    [JsonPropertyName("valid")]
+    public bool Valid { get; set; }
+
+    [JsonPropertyName("errors")]
+    public string[] Errors { get; set; } = [];
+
+    [JsonPropertyName("warnings")]
+    public string[] Warnings { get; set; } = [];
+
+    [JsonPropertyName("model")]
+    public AssetCheckResult Model { get; set; } = new();
+
+    [JsonPropertyName("voices")]
+    public VoiceAssetResult Voices { get; set; } = new();
+
+    [JsonPropertyName("espeak")]
+    public AssetCheckResult Espeak { get; set; } = new();
+
+    [JsonPropertyName("onnx_runtime")]
+    public AssetCheckResult OnnxRuntime { get; set; } = new();
+
+    [JsonPropertyName("asset_root")]
+    public string? AssetRoot { get; set; }
 }
 
 // ── Event types (v0.3.0) ──

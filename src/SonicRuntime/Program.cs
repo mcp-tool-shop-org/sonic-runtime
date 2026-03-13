@@ -33,7 +33,7 @@ using var synthesis = new SynthesisEngine(
     state, tokenizer, voiceRegistry, inference, events: events);
 var dispatcher = new CommandDispatcher(
     playback, devices, synthesis,
-    state, voiceRegistry, inference, tokenizer);
+    state, voiceRegistry, inference, tokenizer, baseDir);
 var loop = new CommandLoop(dispatcher);
 events.Connect(loop);
 

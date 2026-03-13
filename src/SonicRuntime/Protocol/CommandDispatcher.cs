@@ -18,6 +18,7 @@ public sealed class CommandDispatcher
     private readonly VoiceRegistry? _voiceRegistry;
     private readonly KokoroInference? _inference;
     private readonly KokoroTokenizer? _tokenizer;
+    private readonly string _baseDir;
     private readonly long _startTimestamp = Stopwatch.GetTimestamp();
 
     public CommandDispatcher(
@@ -27,7 +28,8 @@ public sealed class CommandDispatcher
         RuntimeState? state = null,
         VoiceRegistry? voiceRegistry = null,
         KokoroInference? inference = null,
-        KokoroTokenizer? tokenizer = null)
+        KokoroTokenizer? tokenizer = null,
+        string? baseDir = null)
     {
         _playback = playback;
         _devices = devices;
@@ -36,6 +38,7 @@ public sealed class CommandDispatcher
         _voiceRegistry = voiceRegistry;
         _inference = inference;
         _tokenizer = tokenizer;
+        _baseDir = baseDir ?? AppContext.BaseDirectory;
     }
 
     public async Task<object?> DispatchAsync(RuntimeRequest request)
@@ -61,6 +64,7 @@ public sealed class CommandDispatcher
             "list_voices" => ListVoices(),
             "preload_model" => PreloadModel(),
             "get_model_status" => GetModelStatus(),
+            "validate_assets" => ValidateAssets(),
             "shutdown" => Shutdown(),
             _ => throw new RuntimeException("method_not_found", $"Unknown method: {request.Method}", retryable: false)
         };
@@ -199,7 +203,7 @@ public sealed class CommandDispatcher
         return new CapabilitiesResult
         {
             Engines = ["kokoro"],
-            Features = ["playback", "synthesis", "device_management", "introspection"],
+            Features = ["playback", "synthesis", "device_management", "introspection", "asset_validation"],
             Protocol = "ndjson-stdio-v1"
         };
     }
@@ -245,6 +249,101 @@ public sealed class CommandDispatcher
             Path = _inference.ModelPath,
             LoadTimeMs = _inference.LoadTimeMs,
             InferenceCount = _inference.InferenceCount
+        };
+    }
+
+    private ValidateAssetsResult ValidateAssets()
+    {
+        var errors = new List<string>();
+        var warnings = new List<string>();
+
+        var modelsDir = Path.Combine(_baseDir, "models");
+        var voicesDir = Path.Combine(_baseDir, "voices");
+        var espeakDir = Path.Combine(_baseDir, "espeak");
+
+        // ── Model check ──
+        var modelPath = Path.Combine(modelsDir, "kokoro.onnx");
+        var model = new AssetCheckResult { Path = modelPath };
+        if (File.Exists(modelPath))
+        {
+            model.Available = true;
+        }
+        else if (!Directory.Exists(modelsDir))
+        {
+            model.Available = false;
+            model.Error = "models/ directory not found";
+            model.Hint = $"Create {modelsDir} and place kokoro.onnx inside it";
+            errors.Add("Model directory missing");
+        }
+        else
+        {
+            model.Available = false;
+            model.Error = "kokoro.onnx not found in models/";
+            model.Hint = $"Download kokoro.onnx (FP32, ~326 MB) to {modelsDir}";
+            errors.Add("Model file missing");
+        }
+
+        // ── Voices check ──
+        var voiceResult = new VoiceAssetResult { Path = voicesDir };
+        if (Directory.Exists(voicesDir))
+        {
+            var voiceIds = _voiceRegistry?.ListVoices() ?? [];
+            voiceResult.Available = voiceIds.Length > 0;
+            voiceResult.Count = voiceIds.Length;
+            voiceResult.Voices = voiceIds;
+            if (voiceIds.Length == 0)
+            {
+                voiceResult.Error = "No .bin voice files found in voices/";
+                voiceResult.Hint = "Place Kokoro voice .bin files (e.g. af_heart.bin) in the voices/ directory";
+                warnings.Add("No voice files loaded");
+            }
+        }
+        else
+        {
+            voiceResult.Available = false;
+            voiceResult.Error = "voices/ directory not found";
+            voiceResult.Hint = $"Create {voicesDir} and place Kokoro voice .bin files inside it";
+            errors.Add("Voices directory missing");
+        }
+
+        // ── eSpeak check ──
+        var espeak = new AssetCheckResult { Path = espeakDir };
+        var espeakAvailable = _tokenizer?.IsEspeakAvailable ?? false;
+        espeak.Available = espeakAvailable;
+        if (!espeakAvailable)
+        {
+            espeak.Error = "eSpeak-NG binary not found";
+            espeak.Hint = $"Place espeak-ng.exe (or espeak-ng) and espeak-ng-data/ in {espeakDir}, or install espeak-ng on PATH";
+            errors.Add("eSpeak-NG not found");
+        }
+        var espeakData = Path.Combine(espeakDir, "espeak-ng-data");
+        if (espeakAvailable && !Directory.Exists(espeakData))
+        {
+            warnings.Add("espeak-ng-data/ directory not found — eSpeak may use system data");
+        }
+
+        // ── ONNX Runtime check ──
+        // In NativeAOT single-file, Assembly.Location is empty.
+        // If we're running, ONNX Runtime was linked. Check the native DLL instead.
+        var onnx = new AssetCheckResult { Available = true, Path = _baseDir };
+        var onnxDll = Path.Combine(_baseDir, "onnxruntime.dll");
+        var onnxSo = Path.Combine(_baseDir, "libonnxruntime.so");
+        if (File.Exists(onnxDll))
+            onnx.Path = onnxDll;
+        else if (File.Exists(onnxSo))
+            onnx.Path = onnxSo;
+        // If neither is found as separate file, it's statically linked — still available
+
+        return new ValidateAssetsResult
+        {
+            Valid = errors.Count == 0,
+            Errors = errors.ToArray(),
+            Warnings = warnings.ToArray(),
+            Model = model,
+            Voices = voiceResult,
+            Espeak = espeak,
+            OnnxRuntime = onnx,
+            AssetRoot = _baseDir
         };
     }
 
