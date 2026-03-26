@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.0.1
+
+- `--version` / `-V` and `--help` / `-h` CLI flags
+- SHA-pinned CI actions
+- Version alignment test
+- CHANGELOG updated with v1.0.0 entry
+
+## v1.0.0
+
+- Promoted to v1.0.0 — production-stable release
+- NuGet package metadata
+- SECURITY.md with threat model
+- 85 tests passing
+
 ## v0.5.0
 
 - **Per-playback device routing** — `play` accepts optional `output_device_id`
