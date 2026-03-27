@@ -8,7 +8,6 @@ Assets are resolved relative to the binary (`AppContext.BaseDirectory`):
 publish/
 ├── SonicRuntime.exe
 ├── onnxruntime.dll
-├── miniaudio.dll
 ├── models/
 │   └── kokoro.onnx          # Required — Kokoro v1.0 ONNX model
 ├── voices/

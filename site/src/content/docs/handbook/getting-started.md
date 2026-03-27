@@ -24,7 +24,7 @@ dotnet build
 dotnet test
 ```
 
-The test suite (95 tests) covers playback, device management, synthesis, protocol parsing, and event emission. Tests that need real audio assets look for files in `assets-test/`.
+The test suite (98 tests) covers playback, device management, synthesis, protocol parsing, event emission, and version alignment. Tests that need real audio assets look for files in `assets-test/`.
 
 ## Publish (NativeAOT)
 
@@ -48,10 +48,12 @@ sonic-core's SidecarBackend will spawn the binary, complete the version handshak
 
 ## Synthesis assets
 
-For TTS synthesis, sonic-runtime needs additional assets:
+For TTS synthesis, sonic-runtime needs additional assets placed relative to the published binary:
 
-- **Kokoro ONNX model** — placed in `assets/models/`
-- **Voice embeddings** — 510 voices in `assets/voices/`
-- **eSpeak-NG** — installed and available on PATH
+- **Kokoro ONNX model** — placed in `models/kokoro.onnx` (relative to binary)
+- **Voice embeddings** — `.bin` files in `voices/` (e.g., `af_heart.bin`)
+- **eSpeak-NG** — binary and data in `espeak/`, or installed on system PATH
+
+Playback works without synthesis assets. Only synthesis commands require the model, voices, and eSpeak.
 
 See [docs/synthesis-assets.md](https://github.com/mcp-tool-shop-org/sonic-runtime/blob/main/docs/synthesis-assets.md) for the full operator contract. Playback works without synthesis assets.

@@ -13,6 +13,7 @@ Welcome to the sonic-runtime handbook. This is the complete guide to building, p
 - **[Architecture](/sonic-runtime/handbook/architecture/)** — Engine components, OpenAL, and the command loop
 - **[Protocol](/sonic-runtime/handbook/protocol/)** — ndjson-stdio-v1 wire format, commands, and events
 - **[Security](/sonic-runtime/handbook/security/)** — Threat model and asset verification
+- **[Beginners Guide](/sonic-runtime/handbook/beginners/)** — Step-by-step introduction for newcomers
 
 ## What sonic-runtime is
 

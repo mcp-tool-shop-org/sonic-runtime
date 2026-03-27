@@ -14,7 +14,7 @@ stdin (JSON) → CommandLoop → CommandDispatcher → Engine components → std
                     │                             ├─ SynthesisEngine (Kokoro ONNX → WAV → playback)
                     │                             │   ├─ KokoroTokenizer (eSpeak G2P)
                     │                             │   ├─ KokoroInference (ONNX Runtime)
-                    │                             │   └─ VoiceRegistry (510 voices)
+                    │                             │   └─ VoiceRegistry (style embeddings)
                     │                             └─ RuntimeState (handle tracking)
                     └─ IEventWriter → stdout (unsolicited events)
 ```
@@ -45,14 +45,15 @@ Enumerates audio output devices via `ALC_ENUMERATE_ALL_EXT`:
 
 ## SynthesisEngine
 
-Text-to-speech pipeline:
+Text-to-speech pipeline using Kokoro ONNX:
 
-1. **KokoroTokenizer** — spawns eSpeak-NG to convert text to phoneme sequences
-2. **KokoroInference** — runs the Kokoro ONNX model to generate audio samples
-3. **WavWriter** — packages float32 samples into a WAV buffer
-4. **PlaybackEngine** — plays the generated WAV through OpenAL
+1. **KokoroTokenizer** — normalizes text (currency, titles, decimals), spawns eSpeak-NG for grapheme-to-phoneme conversion, maps IPA output to 178-token vocab, pads for model input
+2. **VoiceRegistry** — loads raw float32 `.bin` voice embeddings at startup (shape: 510 entries x 256 floats per voice). Selects a 256-float style vector based on token count
+3. **KokoroInference** — runs the Kokoro ONNX model (lazy-loaded, held for process lifetime). Inputs: token IDs, style vector, speed. Output: float32 PCM at 24 kHz. Thread-safe via lock
+4. **WavWriter** — converts float32 samples to 16-bit PCM WAV
+5. **PlaybackEngine** — loads the generated WAV into an OpenAL buffer for playback
 
-Performance: approximately 5x realtime on CPU.
+Performance: approximately 5x realtime on CPU. Speed parameter accepted in range 0.5-2.0.
 
 ## RuntimeState
 
@@ -60,9 +61,13 @@ Tracks active handles, maps them to playback slots, and manages lifecycle. Handl
 
 ## Event system
 
-Events flow from engine components to the parent process via `IEventWriter`:
+Events flow from engine components to the parent process via `IEventWriter`. The `CommandLoopEventWriter` bridges engine events to the CommandLoop's stdout writer using late binding (via `Connect()`) to break the circular dependency between engines and the loop.
 
-- `playback_ended` — a playback completed or was stopped
-- `synthesis_started` / `synthesis_completed` — TTS pipeline lifecycle
+Event types:
 
-Events are unsolicited JSON messages on stdout, distinct from request/response pairs (they have no `id` field).
+- `playback_ended` — a playback completed naturally or was stopped. Data: `handle`, `reason` ("completed" or "stopped")
+- `synthesis_started` — TTS inference began. Data: `handle`, `engine`, `voice`
+- `synthesis_completed` — TTS inference finished. Data: `handle`, `duration_ms`, `inference_ms`
+- `synthesis_failed` — TTS inference failed. Data: `handle`, `code`, `message`
+
+Events are unsolicited JSON messages on stdout, distinct from request/response pairs (they have no `id` field). A `NullEventWriter` is available for test isolation.

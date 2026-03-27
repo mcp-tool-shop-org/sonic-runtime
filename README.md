@@ -1,4 +1,8 @@
 <p align="center">
+  <a href="README.ja.md">日本語</a> | <a href="README.zh.md">中文</a> | <a href="README.es.md">Español</a> | <a href="README.fr.md">Français</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.it.md">Italiano</a> | <a href="README.pt-BR.md">Português (BR)</a>
+</p>
+
+<p align="center">
   <img src="https://raw.githubusercontent.com/mcp-tool-shop-org/brand/main/logos/sonic-runtime/readme.png" width="400" alt="sonic-runtime" />
 </p>
 
@@ -66,7 +70,7 @@ Quick example:
 
 ```
 → {"id":1,"method":"version"}
-← {"id":1,"result":{"name":"sonic-runtime","version":"0.5.0","protocol":"ndjson-stdio-v1"}}
+← {"id":1,"result":{"name":"sonic-runtime","version":"1.0.1","protocol":"ndjson-stdio-v1"}}
 
 → {"id":2,"method":"load_asset","params":{"asset_ref":"file:///rain.wav"}}
 ← {"id":2,"result":{"handle":"h_000000000001"}}
@@ -85,7 +89,7 @@ stdin (JSON) → CommandLoop → CommandDispatcher → Engine components → std
                     │                             │   ├─ KokoroTokenizer (eSpeak G2P)
                     │                             │   ├─ KokoroInference (ONNX Runtime)
                     │                             │   └─ VoiceRegistry (510 voices, raw float32)
-                    │                             └─ RuntimeState (handle tracking)
+                    │                             └─ RuntimeState (handle tracking, h_XXXXXXXXXXXX format)
                     └─ IEventWriter → stdout (unsolicited events)
 ```
 
@@ -97,7 +101,7 @@ Real synthesis requires model files, voice embeddings, and eSpeak-NG. See [docs/
 
 ## Status
 
-**v0.5.0** — Per-playback device routing, OpenAL Soft backend, 95 tests.
+**v1.0.1** — Production-stable. OpenAL Soft playback, per-playback device routing, Kokoro TTS, 98 tests.
 
 ## License
 
