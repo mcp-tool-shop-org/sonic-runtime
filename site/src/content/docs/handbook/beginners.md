@@ -119,13 +119,49 @@ For synthesis:
 ← {"id":7,"result":null}
 ```
 
+## Validating your setup
+
+Before running synthesis, you can check that all required assets are in place using the `validate_assets` command:
+
+```
+→ {"id":1,"method":"validate_assets"}
+← {"id":1,"result":{"valid":true,"errors":[],"warnings":[],"model":{"available":true,"path":"..."},"voices":{"available":true,"count":10,"voices":["af_heart","am_onyx",...]},"espeak":{"available":true,"path":"..."},"onnx_runtime":{"available":true,"path":"..."},"asset_root":"..."}}
+```
+
+If any asset is missing, the response includes an `errors` array and each asset check includes an `error` message and a `hint` telling you exactly what to do. For example, a missing model returns:
+
+```json
+{"error": "kokoro.onnx not found in models/", "hint": "Download kokoro.onnx (FP32, ~326 MB) to C:\\publish\\models"}
+```
+
+You can also check the runtime health at any time:
+
+```
+→ {"id":2,"method":"get_health"}
+← {"id":2,"result":{"status":"ok","uptime_ms":12345,"active_handles":0,"model_loaded":true,"voices_loaded":10,"espeak_available":true}}
+```
+
+## Device routing
+
+sonic-runtime supports per-playback device routing. You can list available audio output devices and direct any playback to a specific one:
+
+```
+→ {"id":10,"method":"list_devices"}
+← {"id":10,"result":[{"device_id":"openal_0_a1b2c3d4","name":"Speakers (Realtek)","kind":"output","is_default":true,"channels":2,"sample_rates":[44100,48000]},{"device_id":"openal_1_e5f6a7b8","name":"Headphones (USB)","kind":"output","is_default":false,"channels":2,"sample_rates":[44100,48000]}]}
+
+→ {"id":11,"method":"play","params":{"handle":"h_000000000001","volume":0.8,"output_device_id":"openal_1_e5f6a7b8"}}
+← {"id":11,"result":null}
+```
+
+Device IDs are opaque strings that change when hardware is reconnected. Always call `list_devices` before routing to a specific device.
+
 ## Running the tests
 
 ```bash
 dotnet test
 ```
 
-The test suite (98 tests) covers all protocol methods, engine components, event emission, error handling, and version alignment. Tests that require real audio hardware or synthesis assets are isolated and use mock backends.
+The test suite covers all protocol methods, engine components, event emission, error handling, and version alignment. Tests that require real audio hardware or synthesis assets are isolated and use mock backends.
 
 ## Common errors
 

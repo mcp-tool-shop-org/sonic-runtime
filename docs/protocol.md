@@ -50,7 +50,7 @@ Error shape matches `SonicError` from `@sonic-core/types`.
 | Method | Params | Result | Description |
 |--------|--------|--------|-------------|
 | `load_asset` | `{ asset_ref }` | `{ handle, duration_ms? }` | Load audio file, return opaque handle |
-| `play` | `{ handle, volume?, pan?, fade_in_ms?, loop? }` | `null` | Start playback |
+| `play` | `{ handle, volume?, pan?, fade_in_ms?, loop?, output_device_id? }` | `null` | Start playback (optionally on a specific device) |
 | `pause` | `{ handle, fade_out_ms? }` | `null` | Pause |
 | `resume` | `{ handle, fade_in_ms? }` | `null` | Resume |
 | `stop` | `{ handle, fade_out_ms? }` | `null` | Stop and release |
@@ -71,7 +71,34 @@ Error shape matches `SonicError` from `@sonic-core/types`.
 
 | Method | Params | Result | Description |
 |--------|--------|--------|-------------|
-| `synthesize` | `{ engine, voice, text, speed? }` | `{ handle }` | Run TTS, return playable handle |
+| `synthesize` | `{ engine, voice, text, speed? }` | `{ handle, duration_ms, sample_rate, channels }` | Run TTS, return playable handle |
+
+### Introspection
+
+| Method | Params | Result | Description |
+|--------|--------|--------|-------------|
+| `get_health` | — | `{ status, uptime_ms, active_handles, model_loaded, voices_loaded, espeak_available }` | Runtime health snapshot |
+| `get_capabilities` | — | `{ engines, features, protocol, synthesis_format, playback_formats }` | Supported engines and features |
+| `list_voices` | — | `VoiceInfo[]` | All loaded voice IDs with language and gender |
+| `preload_model` | — | `{ loaded, load_time_ms }` | Force-load the ONNX model (normally lazy-loaded) |
+| `get_model_status` | — | `{ loaded, path, load_time_ms, inference_count }` | Current model state |
+| `validate_assets` | — | `{ valid, errors, warnings, model, voices, espeak, onnx_runtime, asset_root }` | Check all synthesis assets with hints |
+| `shutdown` | — | — | Graceful exit |
+
+## Events
+
+Events are unsolicited JSON messages on stdout (no `id` field):
+
+```json
+{ "event": "playback_ended", "data": { "handle": "h_000000000001", "reason": "completed" } }
+```
+
+| Event | Data | When |
+|-------|------|------|
+| `playback_ended` | `handle`, `reason` | Playback completed ("completed") or was stopped ("stopped") |
+| `synthesis_started` | `handle`, `engine`, `voice` | TTS pipeline began |
+| `synthesis_completed` | `handle`, `duration_ms`, `inference_ms` | TTS inference finished |
+| `synthesis_failed` | `handle`, `code`, `message` | TTS inference failed |
 
 ## Handle Semantics
 
@@ -81,15 +108,22 @@ translates `handle` ↔ `playback_id`. Clients never see handles.
 
 ## Error Codes
 
-| Code | Description |
-|------|-------------|
-| `invalid_params` | Missing or malformed parameters |
-| `method_not_found` | Unknown method name |
-| `playback_not_found` | Handle does not exist |
-| `device_unavailable` | Requested device not found or unplugged |
-| `seek_unsupported` | Cannot seek this source type |
-| `synthesis_validation_failed` | Bad engine/voice/text |
-| `internal_error` | Unexpected runtime error |
+| Code | Retryable | Description |
+|------|-----------|-------------|
+| `invalid_params` | no | Missing or malformed parameters |
+| `method_not_found` | no | Unknown method name |
+| `playback_not_found` | no | Handle does not exist |
+| `device_unavailable` | yes | Requested device not found or unplugged |
+| `seek_unsupported` | no | Cannot seek this source type |
+| `invalid_source` | no | OpenAL error or asset file not found |
+| `unsupported_format` | no | Audio format not supported (non-PCM WAV, bad bit depth) |
+| `synthesis_validation_failed` | no | Bad engine, voice, text, or speed value |
+| `synthesis_voice_not_found` | no | Requested voice ID not loaded |
+| `synthesis_model_missing` | no | ONNX model file not found |
+| `synthesis_model_load_failed` | no | ONNX model failed to load |
+| `synthesis_inference_failed` | yes | ONNX inference error or empty output |
+| `synthesis_not_configured` | no | Synthesis engine not available |
+| `internal_error` | no | Unexpected runtime error |
 
 ## Logging Policy
 

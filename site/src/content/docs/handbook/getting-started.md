@@ -56,4 +56,4 @@ For TTS synthesis, sonic-runtime needs additional assets placed relative to the 
 
 Playback works without synthesis assets. Only synthesis commands require the model, voices, and eSpeak.
 
-See [docs/synthesis-assets.md](https://github.com/mcp-tool-shop-org/sonic-runtime/blob/main/docs/synthesis-assets.md) for the full operator contract. Playback works without synthesis assets.
+See [docs/synthesis-assets.md](https://github.com/mcp-tool-shop-org/sonic-runtime/blob/main/docs/synthesis-assets.md) for the full operator contract.
